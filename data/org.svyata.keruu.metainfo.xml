@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.svyata.keruu</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>keruu</name>
+  <summary>Аудиоплеер для рабочего стола GNOME</summary>
+  <description>
+    <p>keruu — аудиоплеер для рабочего стола GNOME, сфокусированный на управлении медиатекой.</p>
+    <p>Возможности:</p>
+    <ul>
+      <li>Автоматическое сканирование папки «Музыка» с чтением тегов.</li>
+      <li>Разделы медиатеки: альбомы, исполнители, жанры, треки.</li>
+      <li>Плейлисты и «Любимые треки».</li>
+      <li>Режимы сетки и списка, три уровня масштаба и сортировка.</li>
+      <li>Очередь воспроизведения, перемешивание и повтор.</li>
+      <li>Плеер-бар с адаптивной вёрсткой и полноэкранным плеером.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.svyata.keruu.desktop</launchable>
+  <developer id="org.svyata">
+    <name>svyata</name>
+  </developer>
+  <url type="homepage">https://github.com/the-shrine-maiden/keruu</url>
+  <url type="bugtracker">https://github.com/the-shrine-maiden/keruu/issues</url>
+  <provides>
+    <binary>keruu</binary>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Player</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-19"/>
+  </releases>
+</component>

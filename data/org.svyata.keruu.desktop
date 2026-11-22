@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=keruu
+Comment=Аудиоплеер для рабочего стола GNOME
+Comment[en]=Audio player for the GNOME desktop
+Exec=keruu
+Icon=org.svyata.keruu
+Terminal=false
+Categories=GTK;AudioVideo;Audio;Player;
+Keywords=audio;music;player;library;
+Keywords[ru]=аудио;музыка;плеер;медиатека;
+StartupNotify=true
