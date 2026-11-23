@@ -487,9 +487,9 @@ static void create_row_menu_popup(GtkMenuButton *button, gpointer user_data) {
     track_menu_detach_on_close(popover, GTK_WIDGET(button));
 }
 
-void track_menu_attach_row(GtkWidget *row, GtkWidget *suffix_box,
-                           TrackContext context, Player *player) {
-    if (!row || !suffix_box) return;
+GtkWidget *track_menu_attach_row(GtkWidget *row, GtkWidget *suffix_box,
+                                 TrackContext context, Player *player) {
+    if (!row || !suffix_box) return NULL;
 
     TrackRowMenu *m = g_new0(TrackRowMenu, 1);
     m->player = player;
@@ -499,10 +499,11 @@ void track_menu_attach_row(GtkWidget *row, GtkWidget *suffix_box,
     m->fav_btn = track_favorite_button_new(NULL);
     gtk_box_append(GTK_BOX(suffix_box), m->fav_btn);
 
-    gtk_box_append(GTK_BOX(suffix_box),
-                   track_menu_make_button(row, create_row_menu_popup, m, NULL));
+    GtkWidget *menu_btn = track_menu_make_button(row, create_row_menu_popup, m, NULL);
+    gtk_box_append(GTK_BOX(suffix_box), menu_btn);
 
     g_object_set_data_full(G_OBJECT(row), "track-row-menu", m, g_free);
+    return menu_btn;
 }
 
 void track_menu_row_set_track(GtkWidget *row, Track *track) {

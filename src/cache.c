@@ -33,6 +33,7 @@ GPtrArray *cache_load_tracks(void) {
         int track_num      = g_key_file_get_integer(kf, groups[i], "track_number", NULL);
         int disc_num       = g_key_file_get_integer(kf, groups[i], "disc_number", NULL);
         int year_val       = g_key_file_get_integer(kf, groups[i], "year", NULL);
+        int duration_val   = g_key_file_get_integer(kf, groups[i], "duration", NULL);
         char *cover_path   = g_key_file_get_string(kf, groups[i], "cover_path", NULL);
         char *disc_subtitle = g_key_file_get_string(kf, groups[i], "disc_subtitle", NULL);
 
@@ -49,8 +50,9 @@ GPtrArray *cache_load_tracks(void) {
             guint tn = track_num > 0 ? (guint)track_num : 0;
             guint dn = disc_num > 0 ? (guint)disc_num : 0;
             guint yr = year_val > 0 ? (guint)year_val : 0;
+            guint dur = duration_val > 0 ? (guint)duration_val : 0;
             g_ptr_array_add(tracks, track_new(uri, title, artist, album, album_artist,
-                                              genre, tn, dn, disc_subtitle, yr, cover_path));
+                                              genre, tn, dn, disc_subtitle, yr, cover_path, dur));
         }
 
         g_free(uri);
@@ -88,6 +90,7 @@ void cache_save_tracks(GPtrArray *tracks) {
         g_key_file_set_integer(kf, group, "track_number", (int)t->track_number);
         g_key_file_set_integer(kf, group, "disc_number", (int)t->disc_number);
         g_key_file_set_integer(kf, group, "year", (int)t->year);
+        g_key_file_set_integer(kf, group, "duration", (int)t->duration);
         g_key_file_set_string(kf, group, "cover_path", t->cover_path ? t->cover_path : "");
         g_key_file_set_string(kf, group, "disc_subtitle", t->disc_subtitle ? t->disc_subtitle : "");
 

@@ -3,6 +3,7 @@
 #include "track.h"
 #include "track_list.h"
 #include "ui_helpers.h"
+#include "view_controls.h"
 
 struct _GenresView {
     Player *player;
@@ -10,8 +11,19 @@ struct _GenresView {
     AdwNavigationView *nav;
     AdwNavigationPage *root;
     GtkListBox *list;
+    ViewControls *controls;
     GHashTable *index; /* имя жанра -> GPtrArray* треков (заимствованы) */
 };
+
+/* Размер элементов общий для раздела: обновляем список открытой страницы жанра. */
+static void on_controls_changed(ViewControls *vc, gpointer user_data) {
+    (void)vc;
+    GenresView *gv = user_data;
+    AdwNavigationPage *top = adw_navigation_view_get_visible_page(gv->nav);
+    if (!top) return;
+    TrackList *tl = g_object_get_data(G_OBJECT(top), "playing-tracklist");
+    if (tl) track_list_refresh(tl);
+}
 
 static void genre_bucket_free(gpointer data) {
     g_ptr_array_unref(data);
@@ -45,7 +57,10 @@ static void on_genre_activated(GtkListBox *box, GtkListBoxRow *row, gpointer use
     GPtrArray *matches = gv->index ? g_hash_table_lookup(gv->index, genre) : NULL;
     GPtrArray *filtered = matches ? g_ptr_array_ref(matches) : g_ptr_array_new();
 
-    TrackListConfig sub_cfg = { .context = TRACK_CONTEXT_GENRE };
+    TrackListConfig sub_cfg = {
+        .context = TRACK_CONTEXT_GENRE,
+        .controls = gv->controls,
+    };
     TrackList *tl = track_list_new(gv->player, &sub_cfg);
     track_list_set_tracks(tl, filtered);
     Track *cur = player_get_current_track(gv->player);
@@ -72,8 +87,14 @@ GenresView *genres_view_new(Player *player, AdwOverlaySplitView *split_view) {
     GtkWidget *scrolled = ui_create_scrolled_list(&gv->list);
     g_signal_connect(gv->list, "row-activated", G_CALLBACK(on_genre_activated), gv);
 
+    gv->controls = view_controls_new(TRUE, on_controls_changed, gv);
+    GtkWidget *hb = ui_create_content_header(split_view);
+    adw_header_bar_pack_end(ADW_HEADER_BAR(hb), view_controls_get_widget(gv->controls));
+
     AdwToolbarView *tv = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
-    adw_toolbar_view_add_top_bar(tv, ui_create_content_header(split_view));
+    gtk_widget_add_css_class(GTK_WIDGET(tv), "view");
+    adw_toolbar_view_set_top_bar_style(tv, ADW_TOOLBAR_FLAT);
+    adw_toolbar_view_add_top_bar(tv, hb);
     adw_toolbar_view_set_content(tv, scrolled);
 
     AdwNavigationPage *root = adw_navigation_page_new(GTK_WIDGET(tv), "Жанры");
@@ -138,5 +159,6 @@ void genres_view_free(GenresView *gv) {
     if (!gv) return;
     if (gv->tracks) g_ptr_array_unref(gv->tracks);
     if (gv->index) g_hash_table_destroy(gv->index);
+    if (gv->controls) view_controls_free(gv->controls);
     g_free(gv);
 }

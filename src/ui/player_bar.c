@@ -9,7 +9,8 @@
 /* Размытый фон бара на основе обложки трека. */
 #define BACKGROUND_SIZE 96
 #define BACKGROUND_BLUR 42.0
-#define BACKGROUND_SCRIM 0.60
+#define BACKGROUND_SCRIM 0.60        /* затемнение/подсветка в тёмной теме */
+#define BACKGROUND_SCRIM_LIGHT 0.80  /* белая подсветка в светлой теме */
 
 typedef enum {
     LAYOUT_WIDE,     /* десктоп: три колонки */
@@ -165,8 +166,13 @@ static void keruu_player_bar_root_snapshot(GtkWidget *widget, GtkSnapshot *snaps
             gtk_snapshot_append_texture(snapshot, self->background, &bounds);
             gtk_snapshot_pop(snapshot);
 
+            /* Светлая тема использует тёмный текст, поэтому затемнять фон
+             * чёрным нельзя — поверх размытой обложки кладём белую подсветку,
+             * чтобы передний план оставался читаемым. */
+            gboolean dark = adw_style_manager_get_dark(adw_style_manager_get_default());
             graphene_rect_t full = GRAPHENE_RECT_INIT(0, 0, width, height);
-            GdkRGBA scrim = { 0.0, 0.0, 0.0, BACKGROUND_SCRIM };
+            GdkRGBA scrim = dark ? (GdkRGBA){ 0.0, 0.0, 0.0, BACKGROUND_SCRIM }
+                                 : (GdkRGBA){ 1.0, 1.0, 1.0, BACKGROUND_SCRIM_LIGHT };
             gtk_snapshot_append_color(snapshot, &scrim, &full);
         }
     }

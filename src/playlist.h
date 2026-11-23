@@ -37,4 +37,13 @@ gboolean   playlist_contains_uri(const Playlist *pl, const char *uri);
 gboolean   playlist_add_uri(const Playlist *pl, const char *uri);
 gboolean   playlist_remove_uri(const Playlist *pl, const char *uri);
 
+/* Переименовывает плейлист: переписывает файл с новым заголовком #PLAYLIST и
+ * переносит его под новое имя (с уникальным суффиксом при совпадении). «Любимые
+ * треки» не переименовываются. Возвращает новый путь (владеет вызывающий) или
+ * NULL при ошибке. */
+char      *playlist_rename(const Playlist *pl, const char *new_name);
+
+/* Удаляет файл плейлиста с диска. «Любимые треки» не удаляются. */
+gboolean   playlist_delete(const Playlist *pl);
+
 void       playlist_free(Playlist *pl);

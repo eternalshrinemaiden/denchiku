@@ -3,6 +3,7 @@
 #include "track.h"
 #include "track_list.h"
 #include "ui_helpers.h"
+#include "view_controls.h"
 
 struct _PlaylistsView {
     Player *player;
@@ -15,6 +16,7 @@ struct _PlaylistsView {
     AdwNavigationView *nav;
     AdwNavigationPage *root;
     TrackList *track_list;
+    ViewControls *controls;
     GtkWidget *title_widget;
     GtkWidget *play_btn;
 
@@ -32,6 +34,12 @@ static void on_play_all(GtkButton *btn, gpointer user_data) {
     if (pv->current_tracks && pv->current_tracks->len > 0) {
         player_set_queue_and_play(pv->player, pv->current_tracks, 0);
     }
+}
+
+static void on_controls_changed(ViewControls *vc, gpointer user_data) {
+    (void)vc;
+    PlaylistsView *pv = user_data;
+    track_list_refresh(pv->track_list);
 }
 
 /* Перестраивает список треков текущего плейлиста. */
@@ -64,6 +72,117 @@ static void fill_current(PlaylistsView *pv) {
 
 /* ===================== боковая панель ===================== */
 
+/* Контекст меню плейлиста: к какому плейлисту и разделу относятся действия. */
+typedef struct {
+    PlaylistsView *pv;
+    char *path;
+    GtkWidget *row; /* слабая ссылка: через неё находим окно для диалогов */
+} PlaylistMenuCtx;
+
+static void playlist_menu_ctx_free(gpointer data) {
+    PlaylistMenuCtx *c = data;
+    g_free(c->path);
+    g_free(c);
+}
+
+static void on_playlist_menu_rename(GSimpleAction *action, GVariant *param,
+                                    gpointer user_data) {
+    (void)action;
+    (void)param;
+    PlaylistMenuCtx *c = user_data;
+    playlists_view_rename_dialog(c->pv, c->path,
+                                 GTK_WIDGET(gtk_widget_get_root(c->row)));
+}
+
+static void on_playlist_menu_delete(GSimpleAction *action, GVariant *param,
+                                    gpointer user_data) {
+    (void)action;
+    (void)param;
+    PlaylistMenuCtx *c = user_data;
+    playlists_view_delete_dialog(c->pv, c->path,
+                                 GTK_WIDGET(gtk_widget_get_root(c->row)));
+}
+
+static GtkWidget *create_playlist_menu(PlaylistsView *pv, const char *path, GtkWidget *row) {
+    GMenu *menu = g_menu_new();
+    g_menu_append(menu, "Переименовать", "playlist.rename");
+    g_menu_append(menu, "Удалить плейлист", "playlist.delete");
+
+    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+    g_object_unref(menu);
+
+    PlaylistMenuCtx *ctx = g_new0(PlaylistMenuCtx, 1);
+    ctx->pv = pv;
+    ctx->path = g_strdup(path);
+    ctx->row = row;
+    g_object_set_data_full(G_OBJECT(popover), "playlist-menu-ctx", ctx,
+                           playlist_menu_ctx_free);
+
+    const GActionEntry entries[] = {
+        { "rename", on_playlist_menu_rename, NULL, NULL, NULL, {0} },
+        { "delete", on_playlist_menu_delete, NULL, NULL, NULL, {0} },
+    };
+    GSimpleActionGroup *group = g_simple_action_group_new();
+    g_action_map_add_action_entries(G_ACTION_MAP(group), entries,
+                                    G_N_ELEMENTS(entries), ctx);
+    gtk_widget_insert_action_group(popover, "playlist", G_ACTION_GROUP(group));
+    g_object_unref(group);
+
+    return popover;
+}
+
+static void on_playlist_popover_closed(GtkPopover *popover, gpointer user_data) {
+    (void)user_data;
+    gtk_widget_unparent(GTK_WIDGET(popover));
+}
+
+static void show_playlist_menu(GtkWidget *row, double x, double y) {
+    PlaylistsView *pv = g_object_get_data(G_OBJECT(row), "playlists-view");
+    const char *path = g_object_get_data(G_OBJECT(row), "playlist-path");
+    if (!pv || !path) return;
+
+    GtkWidget *popover = create_playlist_menu(pv, path, row);
+    gtk_widget_set_parent(popover, row);
+
+    GdkRectangle rect = { .x = (int)x, .y = (int)y, .width = 1, .height = 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+    g_signal_connect(popover, "closed", G_CALLBACK(on_playlist_popover_closed), NULL);
+    gtk_popover_popup(GTK_POPOVER(popover));
+}
+
+static void on_playlist_secondary_click(GtkGestureClick *gesture, int n_press,
+                                        double x, double y, gpointer user_data) {
+    (void)n_press;
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+    show_playlist_menu(user_data, x, y);
+}
+
+static void on_playlist_long_press(GtkGestureLongPress *gesture, double x, double y,
+                                   gpointer user_data) {
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+    show_playlist_menu(user_data, x, y);
+}
+
+/* Контекстное меню строки плейлиста: ПКМ или долгое нажатие ЛКМ. К «Любимым
+ * трекам» не привязывается (их нельзя ни удалить, ни переименовать). */
+static void attach_playlist_menu(PlaylistsView *pv, GtkWidget *row) {
+    g_object_set_data(G_OBJECT(row), "playlists-view", pv);
+
+    GtkGesture *click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_SECONDARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(click),
+                                               GTK_PHASE_CAPTURE);
+    g_signal_connect(click, "pressed", G_CALLBACK(on_playlist_secondary_click), row);
+    gtk_widget_add_controller(row, GTK_EVENT_CONTROLLER(click));
+
+    GtkGesture *long_press = gtk_gesture_long_press_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(long_press), GDK_BUTTON_PRIMARY);
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(long_press),
+                                               GTK_PHASE_CAPTURE);
+    g_signal_connect(long_press, "pressed", G_CALLBACK(on_playlist_long_press), row);
+    gtk_widget_add_controller(row, GTK_EVENT_CONTROLLER(long_press));
+}
+
 static void clear_playlist_rows(PlaylistsView *pv) {
     GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(pv->sidebar_list));
     while (child) {
@@ -75,16 +194,52 @@ static void clear_playlist_rows(PlaylistsView *pv) {
     }
 }
 
+/* Индекс подзаголовка «Плейлисты» в боковой панели (-1, если его нет): по нему
+ * «Любимые треки» вставляются выше, а остальные плейлисты — ниже. */
+static int find_playlists_header_index(GtkListBox *list) {
+    GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(list));
+    int idx = 0;
+    while (child) {
+        if (g_strcmp0(g_object_get_data(G_OBJECT(child), "sidebar-role"),
+                      "playlists-header") == 0) {
+            return idx;
+        }
+        child = gtk_widget_get_next_sibling(child);
+        idx++;
+    }
+    return -1;
+}
+
 static void rebuild_sidebar(PlaylistsView *pv) {
     clear_playlist_rows(pv);
+
+    int header_index = find_playlists_header_index(pv->sidebar_list);
+    Playlist *fav = playlist_find_favorite(pv->playlists);
+
+    /* «Любимые треки» относятся к разделу «Треки» и стоят выше подзаголовка
+     * «Плейлисты». */
+    if (fav) {
+        GtkWidget *row = ui_create_sidebar_row("playlists", fav->name,
+                                               "emote-love-symbolic");
+        g_object_set_data(G_OBJECT(row), "playlist-row", GINT_TO_POINTER(1));
+        g_object_set_data_full(G_OBJECT(row), "playlist-path",
+                               g_strdup(fav->path), g_free);
+        if (header_index >= 0) {
+            gtk_list_box_insert(pv->sidebar_list, row, header_index);
+        } else {
+            gtk_list_box_append(pv->sidebar_list, row);
+        }
+    }
+
     for (guint i = 0; i < pv->playlists->len; i++) {
         Playlist *pl = g_ptr_array_index(pv->playlists, i);
-        GtkWidget *row = ui_create_sidebar_row(
-            "playlists", pl->name,
-            pl->favorite ? "emote-love-symbolic" : "view-list-symbolic");
+        if (pl->favorite) continue;
+        GtkWidget *row = ui_create_sidebar_row("playlists", pl->name,
+                                               "view-list-symbolic");
         g_object_set_data(G_OBJECT(row), "playlist-row", GINT_TO_POINTER(1));
         g_object_set_data_full(G_OBJECT(row), "playlist-path",
                                g_strdup(pl->path), g_free);
+        attach_playlist_menu(pv, row);
         gtk_list_box_append(pv->sidebar_list, row);
     }
 }
@@ -179,7 +334,13 @@ PlaylistsView *playlists_view_new(Player *player, AdwOverlaySplitView *split_vie
     g_signal_connect(pv->play_btn, "clicked", G_CALLBACK(on_play_all), pv);
     adw_header_bar_pack_end(ADW_HEADER_BAR(hb), pv->play_btn);
 
-    TrackListConfig tl_cfg = { .context = TRACK_CONTEXT_TRACKS };
+    pv->controls = view_controls_new(TRUE, on_controls_changed, pv);
+    adw_header_bar_pack_end(ADW_HEADER_BAR(hb), view_controls_get_widget(pv->controls));
+
+    TrackListConfig tl_cfg = {
+        .context = TRACK_CONTEXT_TRACKS,
+        .controls = pv->controls,
+    };
     pv->track_list = track_list_new(player, &tl_cfg);
 
     AdwToolbarView *tv = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
@@ -309,11 +470,99 @@ void playlists_view_create_dialog(PlaylistsView *pv, GtkWidget *parent) {
     adw_dialog_present(dialog, parent);
 }
 
+/* ===================== переименование и удаление ===================== */
+
+static void on_rename_response(AdwAlertDialog *dialog, const char *response,
+                               gpointer user_data) {
+    if (g_strcmp0(response, "rename") != 0) return;
+
+    PlaylistsView *pv = user_data;
+    const char *path = g_object_get_data(G_OBJECT(dialog), "playlist-path");
+    GtkWidget *entry = g_object_get_data(G_OBJECT(dialog), "entry");
+    const char *name = gtk_editable_get_text(GTK_EDITABLE(entry));
+    if (!name || !*name) return;
+
+    Playlist *pl = playlist_find_by_path(pv->playlists, path);
+    if (!pl) return;
+
+    /* Переключение на переименованный плейлист нужно только если он сейчас
+     * открыт; иначе сохраняем текущий раздел. */
+    gboolean was_current = pv->current_path &&
+        g_strcmp0(pv->current_path, path) == 0;
+
+    char *new_path = playlist_rename(pl, name);
+    if (!new_path) return;
+
+    playlists_view_reload(pv, was_current ? new_path : NULL);
+    g_free(new_path);
+}
+
+void playlists_view_rename_dialog(PlaylistsView *pv, const char *path, GtkWidget *parent) {
+    Playlist *pl = playlist_find_by_path(pv->playlists, path);
+    if (!pl || pl->favorite) return;
+
+    AdwDialog *dialog = adw_alert_dialog_new("Переименовать плейлист", NULL);
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(dialog), "cancel", "Отмена");
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(dialog), "rename", "Переименовать");
+    adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "rename",
+                                             ADW_RESPONSE_SUGGESTED);
+
+    GtkWidget *entry = gtk_entry_new();
+    gtk_editable_set_text(GTK_EDITABLE(entry), pl->name ? pl->name : "");
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1);
+    gtk_widget_set_margin_top(entry, 6);
+    g_object_set_data(G_OBJECT(dialog), "entry", entry);
+    g_object_set_data_full(G_OBJECT(dialog), "playlist-path", g_strdup(path), g_free);
+    adw_alert_dialog_set_extra_child(ADW_ALERT_DIALOG(dialog), entry);
+
+    g_signal_connect(dialog, "response", G_CALLBACK(on_rename_response), pv);
+    adw_dialog_present(dialog, parent);
+}
+
+static void on_delete_response(AdwAlertDialog *dialog, const char *response,
+                               gpointer user_data) {
+    if (g_strcmp0(response, "delete") != 0) return;
+
+    PlaylistsView *pv = user_data;
+    const char *path = g_object_get_data(G_OBJECT(dialog), "playlist-path");
+
+    Playlist *pl = playlist_find_by_path(pv->playlists, path);
+    if (!pl || pl->favorite) return;
+    if (!playlist_delete(pl)) return;
+
+    /* Если удалили открытый плейлист, сбрасываем текущий, иначе он останется
+     * указывать на исчезнувший файл. */
+    if (pv->current_path && g_strcmp0(pv->current_path, path) == 0) {
+        g_free(pv->current_path);
+        pv->current_path = NULL;
+        /* Показываем пустую страницу вместо удалённого списка. */
+        fill_current(pv);
+    }
+    playlists_view_reload(pv, NULL);
+}
+
+void playlists_view_delete_dialog(PlaylistsView *pv, const char *path, GtkWidget *parent) {
+    Playlist *pl = playlist_find_by_path(pv->playlists, path);
+    if (!pl || pl->favorite) return;
+
+    AdwDialog *dialog = adw_alert_dialog_new("Удалить плейлист?", pl->name);
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(dialog), "cancel", "Отмена");
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(dialog), "delete", "Удалить");
+    adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "delete",
+                                             ADW_RESPONSE_DESTRUCTIVE);
+    g_object_set_data_full(G_OBJECT(dialog), "playlist-path", g_strdup(path), g_free);
+
+    g_signal_connect(dialog, "response", G_CALLBACK(on_delete_response), pv);
+    adw_dialog_present(dialog, parent);
+}
+
 void playlists_view_free(PlaylistsView *pv) {
     if (!pv) return;
     if (pv->playlists) g_ptr_array_unref(pv->playlists);
     if (pv->library) g_ptr_array_unref(pv->library);
     if (pv->current_tracks) g_ptr_array_unref(pv->current_tracks);
+    if (pv->controls) view_controls_free(pv->controls);
     g_free(pv->current_path);
     g_free(pv);
 }

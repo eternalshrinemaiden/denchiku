@@ -13,12 +13,13 @@ typedef struct {
     char *disc_subtitle;
     guint year;
     char *cover_path;
+    guint duration; /* длительность трека в секундах (0 — неизвестна) */
 } Track;
 
 Track *track_new(const char *uri, const char *title, const char *artist,
                  const char *album, const char *album_artist, const char *genre,
                  guint track_number, guint disc_number, const char *disc_subtitle,
-                 guint year, const char *cover_path);
+                 guint year, const char *cover_path, guint duration);
 /* Полная копия трека: элементы очереди хранят собственные копии, потому что
  * объекты медиатеки разделяются между несколькими списками одновременно. */
 Track *track_copy(const Track *track);

@@ -61,8 +61,8 @@ void track_menu_attach(GtkWidget *row, Track *track, TrackContext context, Playe
  * меню и сердечко навешиваются один раз при создании строки в контейнер
  * suffix_box, а текущий трек подставляется при каждой привязке через
  * track_menu_row_set_track(). Так на строку не накапливаются новые кнопки. */
-void track_menu_attach_row(GtkWidget *row, GtkWidget *suffix_box,
-                           TrackContext context, Player *player);
+GtkWidget *track_menu_attach_row(GtkWidget *row, GtkWidget *suffix_box,
+                                 TrackContext context, Player *player);
 
 /* Меняет трек, к которому привязаны меню и сердечко строки (NULL — очистить). */
 void track_menu_row_set_track(GtkWidget *row, Track *track);

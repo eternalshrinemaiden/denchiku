@@ -512,11 +512,30 @@ GtkWidget *main_window_new(AdwApplication *app, Player *player) {
     ws->sidebar_list = GTK_LIST_BOX(gtk_list_box_new());
     gtk_widget_add_css_class(GTK_WIDGET(ws->sidebar_list), "navigation-sidebar");
 
+    /* Раздел «Медиатека»: альбомы, исполнители, жанры. */
+    gtk_list_box_append(ws->sidebar_list,
+                        ui_create_sidebar_section_header("Медиатека", NULL));
     GtkWidget *row_albums = ui_create_sidebar_row("albums", "Альбомы", "media-optical-symbolic");
     gtk_list_box_append(ws->sidebar_list, row_albums);
     gtk_list_box_append(ws->sidebar_list, ui_create_sidebar_row("artists", "Исполнители", "system-users-symbolic"));
     gtk_list_box_append(ws->sidebar_list, ui_create_sidebar_row("genres", "Жанры", "tag-symbolic"));
-    gtk_list_box_append(ws->sidebar_list, ui_create_sidebar_row("tracks", "Треки", "folder-music-symbolic"));
+
+    /* Раздел «Треки»: «Все треки» и «Любимые треки» (строку «Любимых» вставляет
+     * раздел плейлистов прямо под этим подзаголовком). */
+    gtk_list_box_append(ws->sidebar_list,
+                        ui_create_sidebar_section_header("Треки", NULL));
+    gtk_list_box_append(ws->sidebar_list, ui_create_sidebar_row("tracks", "Все треки", "folder-music-symbolic"));
+
+    /* Раздел «Плейлисты» с кнопкой создания справа. Роль строки-подзаголовка
+     * отмечена в данных, чтобы раздел плейлистов знал, куда вставлять строки. */
+    GtkWidget *create_btn = gtk_button_new_from_icon_name("list-add-symbolic");
+    gtk_widget_add_css_class(create_btn, "flat");
+    gtk_widget_set_valign(create_btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(create_btn, "Создать плейлист");
+    g_signal_connect(create_btn, "clicked", G_CALLBACK(on_create_playlist_clicked), ws);
+    GtkWidget *playlists_header = ui_create_sidebar_section_header("Плейлисты", create_btn);
+    g_object_set_data(G_OBJECT(playlists_header), "sidebar-role", "playlists-header");
+    gtk_list_box_append(ws->sidebar_list, playlists_header);
 
 g_signal_connect(ws->sidebar_list, "row-selected", G_CALLBACK(on_sidebar_row_selected), ws);
 track_menu_set_open_album_cb(on_track_open_album, ws);
@@ -528,20 +547,7 @@ album_detail_page_set_open_artist_cb(on_track_open_artist, ws);
 gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sidebar_scroll), GTK_WIDGET(ws->sidebar_list));
 gtk_widget_set_vexpand(sidebar_scroll, TRUE);
 
-/* Кнопка создания плейлиста — под списком, ниже всех плейлистов. */
-GtkWidget *create_btn = gtk_button_new();
-gtk_widget_add_css_class(create_btn, "flat");
-gtk_widget_set_margin_start(create_btn, 6);
-gtk_widget_set_margin_end(create_btn, 6);
-gtk_widget_set_margin_bottom(create_btn, 6);
-gtk_button_set_child(GTK_BUTTON(create_btn),
-                     ui_create_sidebar_row_content("Создать плейлист", "list-add-symbolic"));
-g_signal_connect(create_btn, "clicked", G_CALLBACK(on_create_playlist_clicked), ws);
-
-GtkWidget *sidebar_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-gtk_box_append(GTK_BOX(sidebar_box), sidebar_scroll);
-gtk_box_append(GTK_BOX(sidebar_box), create_btn);
-adw_toolbar_view_set_content(sidebar_tv, sidebar_box);
+adw_toolbar_view_set_content(sidebar_tv, sidebar_scroll);
 AdwNavigationPage *sidebar_page = adw_navigation_page_new(GTK_WIDGET(sidebar_tv), "Музыка");
 adw_overlay_split_view_set_sidebar(ws->split_view, GTK_WIDGET(sidebar_page));
 /* ================= 2. ОСНОВНАЯ ОБЛАСТЬ КОНТЕНТА ================= */

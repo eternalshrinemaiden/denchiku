@@ -36,4 +36,12 @@ void        playlists_view_open_album(PlaylistsView *pv, const char *album, cons
 /* Диалог создания нового плейлиста. */
 void playlists_view_create_dialog(PlaylistsView *pv, GtkWidget *parent);
 
+/* Диалог переименования плейлиста по его пути (parent — окно/виджет для
+ * показа). Для «Любимых треков» не показывается. */
+void playlists_view_rename_dialog(PlaylistsView *pv, const char *path, GtkWidget *parent);
+
+/* Диалог подтверждения удаления плейлиста. Для «Любимых треков» не
+ * показывается. */
+void playlists_view_delete_dialog(PlaylistsView *pv, const char *path, GtkWidget *parent);
+
 void playlists_view_free(PlaylistsView *pv);

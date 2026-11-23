@@ -153,6 +153,33 @@ GtkWidget *ui_create_sidebar_row(const char *page_id, const char *title, const c
     return row;
 }
 
+GtkWidget *ui_create_sidebar_section_header(const char *title, GtkWidget *suffix) {
+    GtkWidget *row = gtk_list_box_row_new();
+    /* Подзаголовок — только визуальный разделитель, его нельзя выбрать или
+     * активировать. */
+    gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+    gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_top(box, 12);
+    gtk_widget_set_margin_bottom(box, 3);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 6);
+
+    GtkWidget *label = gtk_label_new(title);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_widget_add_css_class(label, "dim-label");
+    gtk_widget_add_css_class(label, "caption-heading");
+    gtk_widget_set_hexpand(label, TRUE);
+
+    gtk_box_append(GTK_BOX(box), label);
+    if (suffix) gtk_box_append(GTK_BOX(box), suffix);
+
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+    return row;
+}
+
 void ui_clear_list_box(GtkListBox *list) {
     if (!list) return;
     GtkWidget *child;

@@ -222,18 +222,18 @@ void view_controls_set_zoom(ViewControls *vc, ViewZoom zoom) {
 int view_controls_get_grid_cover_size(ViewControls *vc) {
     switch (vc->zoom) {
         case VIEW_ZOOM_SMALL: return 104;
-        case VIEW_ZOOM_LARGE: return 196;
+        case VIEW_ZOOM_LARGE: return 264;
         case VIEW_ZOOM_MEDIUM:
-        default:              return 148;
+        default:              return 196;
     }
 }
 
 int view_controls_get_list_cover_size(ViewControls *vc) {
     switch (vc->zoom) {
         case VIEW_ZOOM_SMALL: return 32;
-        case VIEW_ZOOM_LARGE: return 64;
+        case VIEW_ZOOM_LARGE: return 96;
         case VIEW_ZOOM_MEDIUM:
-        default:              return 44;
+        default:              return 64;
     }
 }
 

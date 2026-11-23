@@ -26,6 +26,11 @@ GtkWidget *ui_create_sidebar_row(const char *page_id, const char *title, const c
 /* Содержимое строки боковой панели (иконка + подпись) без самой строки:
  * используется и для навигационных строк, и для кнопки создания плейлиста. */
 GtkWidget *ui_create_sidebar_row_content(const char *title, const char *icon_name);
+
+/* Подзаголовок раздела боковой панели («Медиатека», «Треки», «Плейлисты»).
+ * Строка не выбирается и не активируется; suffix (может быть NULL) добавляется
+ * справа — так у подзаголовка «Плейлисты» живёт кнопка создания. */
+GtkWidget *ui_create_sidebar_section_header(const char *title, GtkWidget *suffix);
 void       ui_clear_list_box(GtkListBox *list);
 void       ui_set_row_playing(AdwActionRow *row, gboolean is_playing);
 
@@ -55,7 +60,7 @@ void       ui_pin_tracks_reference(GtkWidget *widget, GPtrArray *tracks);
 gint       ui_compare_tracks_by_number(gconstpointer a, gconstpointer b);
 
 /* Размер обложки-миниатюры слева от названия трека в строке списка. */
-#define UI_ROW_COVER_SIZE 22
+#define UI_ROW_COVER_SIZE 32
 
 void       ui_highlight_playing_in_list(GtkListBox *list, const char *playing_uri);
 

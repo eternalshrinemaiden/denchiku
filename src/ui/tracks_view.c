@@ -2,6 +2,7 @@
 #include "album_detail_page.h"
 #include "track_list.h"
 #include "ui_helpers.h"
+#include "view_controls.h"
 
 struct _TracksView {
     Player *player;
@@ -9,16 +10,32 @@ struct _TracksView {
     AdwNavigationView *nav;
     AdwNavigationPage *root;
     TrackList *list;
+    ViewControls *controls;
 };
+
+static void on_controls_changed(ViewControls *vc, gpointer user_data) {
+    (void)vc;
+    TracksView *tv = user_data;
+    track_list_refresh(tv->list);
+}
 
 TracksView *tracks_view_new(Player *player, AdwOverlaySplitView *split_view) {
     TracksView *tv = g_new0(TracksView, 1);
     tv->player = player;
-    TrackListConfig cfg = { .context = TRACK_CONTEXT_TRACKS };
+    tv->controls = view_controls_new(TRUE, on_controls_changed, tv);
+    TrackListConfig cfg = {
+        .context = TRACK_CONTEXT_TRACKS,
+        .controls = tv->controls,
+    };
     tv->list = track_list_new(player, &cfg);
 
+    GtkWidget *hb = ui_create_content_header(split_view);
+    adw_header_bar_pack_end(ADW_HEADER_BAR(hb), view_controls_get_widget(tv->controls));
+
     AdwToolbarView *toolbar_view = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
-    adw_toolbar_view_add_top_bar(toolbar_view, ui_create_content_header(split_view));
+    gtk_widget_add_css_class(GTK_WIDGET(toolbar_view), "view");
+    adw_toolbar_view_set_top_bar_style(toolbar_view, ADW_TOOLBAR_FLAT);
+    adw_toolbar_view_add_top_bar(toolbar_view, hb);
     adw_toolbar_view_set_content(toolbar_view, track_list_get_widget(tv->list));
 
     AdwNavigationPage *root = adw_navigation_page_new(GTK_WIDGET(toolbar_view), "Треки");
@@ -64,5 +81,6 @@ void tracks_view_refresh_playing(TracksView *tv, const char *playing_uri) {
 
 void tracks_view_free(TracksView *tv) {
     if (tv->tracks) g_ptr_array_unref(tv->tracks);
+    if (tv->controls) view_controls_free(tv->controls);
     g_free(tv);
 }

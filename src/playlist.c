@@ -1,5 +1,6 @@
 #include "playlist.h"
 #include <gio/gio.h>
+#include <glib/gstdio.h>
 
 #define FAVORITE_FILE "favorites.m3u8"
 
@@ -220,7 +221,7 @@ static Track *track_from_uri(const char *uri) {
     char *fs = g_filename_from_uri(uri, NULL, NULL);
     char *base = fs ? g_path_get_basename(fs) : g_strdup(uri);
     Track *t = track_new(uri, base, "Неизвестный исполнитель", "Неизвестный альбом",
-                         NULL, "Без жанра", 0, 0, NULL, 0, NULL);
+                         NULL, "Без жанра", 0, 0, NULL, 0, NULL, 0);
     g_free(base);
     g_free(fs);
     return t;
@@ -420,6 +421,70 @@ Playlist *playlist_create(const char *name) {
     pl->name = g_strdup(name);
     pl->favorite = FALSE;
     return pl;
+}
+
+char *playlist_rename(const Playlist *pl, const char *new_name) {
+    if (!pl || pl->favorite || !new_name || !*new_name) return NULL;
+
+    char *dir = g_path_get_dirname(pl->path);
+    char *base = g_path_get_basename(pl->path);
+    char *dot = g_strrstr(base, ".");
+    char *ext = (dot && dot != base) ? g_strdup(dot) : g_strdup(".m3u8");
+    char *safe = sanitize_filename(new_name);
+
+    /* Новый файл — в той же папке, с тем же расширением; при совпадении имени
+     * добавляем числовой суффикс. Совпадение с текущим путём не суффиксим:
+     * это просто смена отображаемого имени без переноса файла. */
+    char *filename = g_strconcat(safe, ext, NULL);
+    char *newpath = g_build_filename(dir, filename, NULL);
+    for (int n = 2; g_strcmp0(newpath, pl->path) != 0 &&
+                    g_file_test(newpath, G_FILE_TEST_EXISTS); n++) {
+        g_free(newpath);
+        char *alt = g_strdup_printf("%s %d%s", safe, n, ext);
+        newpath = g_build_filename(dir, alt, NULL);
+        g_free(alt);
+    }
+
+    /* Перезаписываем содержимое: заголовок #PLAYLIST меняем на новый, а
+     * содержимое (треки, #EXTINF, комментарии) сохраняем как есть. */
+    GPtrArray *lines = load_raw_lines(pl);
+    GString *out = g_string_new("#EXTM3U\n");
+    g_string_append_printf(out, "#PLAYLIST:%s\n", new_name);
+    for (guint i = 0; i < lines->len; i++) {
+        const char *line = g_ptr_array_index(lines, i);
+        if (g_str_has_prefix(line, "#EXTM3U") ||
+            g_str_has_prefix(line, "#PLAYLIST:") ||
+            *line == '\0') {
+            continue;
+        }
+        g_string_append(out, line);
+        g_string_append_c(out, '\n');
+    }
+    g_ptr_array_unref(lines);
+
+    gboolean same = g_strcmp0(newpath, pl->path) == 0;
+    gboolean ok = g_file_set_contents(newpath, out->str, out->len, NULL);
+    g_string_free(out, TRUE);
+
+    char *result = NULL;
+    if (ok) {
+        if (!same) g_remove(pl->path);
+        result = newpath; /* владение переходит вызывающему */
+        newpath = NULL;
+    }
+
+    g_free(newpath);
+    g_free(filename);
+    g_free(safe);
+    g_free(ext);
+    g_free(base);
+    g_free(dir);
+    return result;
+}
+
+gboolean playlist_delete(const Playlist *pl) {
+    if (!pl || pl->favorite || !pl->path) return FALSE;
+    return g_remove(pl->path) == 0;
 }
 
 void playlist_free(Playlist *pl) {

@@ -250,9 +250,15 @@ static Track *discover_track(GstDiscoverer *discoverer, const char *filepath) {
         guint year = extract_year(tags);
         char *cover_path = extract_and_cache_cover_locked(tags, album_artist, album);
 
+        /* Длительность из discoverer приходит в наносекундах; в модели храним
+         * секунды — этого достаточно для показа и сортировки. */
+        guint duration = 0;
+        GstClockTime dur_ns = gst_discoverer_info_get_duration(info);
+        if (dur_ns != GST_CLOCK_TIME_NONE) duration = (guint)(dur_ns / GST_SECOND);
+
         result = track_new(uri, title, artist, album, album_artist,
                            genre, track_number, disc_number, NULL,
-                           year, cover_path);
+                           year, cover_path, duration);
 
         g_free(title);
         g_free(artist);

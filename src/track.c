@@ -50,7 +50,7 @@ char **track_split_genres(const char *genre_tag) {
 Track *track_new(const char *uri, const char *title, const char *artist,
                  const char *album, const char *album_artist, const char *genre,
                  guint track_number, guint disc_number, const char *disc_subtitle,
-                 guint year, const char *cover_path) {
+                 guint year, const char *cover_path, guint duration) {
     Track *t = g_new0(Track, 1);
     t->uri           = g_strdup(uri);
     t->title         = g_strdup(title);
@@ -63,6 +63,7 @@ Track *track_new(const char *uri, const char *title, const char *artist,
     t->disc_subtitle = g_strdup(disc_subtitle);
     t->year          = year;
     t->cover_path    = g_strdup(cover_path);
+    t->duration      = duration;
     return t;
 }
 
@@ -70,7 +71,7 @@ Track *track_copy(const Track *t) {
     if (!t) return NULL;
     return track_new(t->uri, t->title, t->artist, t->album, t->album_artist,
                      t->genre, t->track_number, t->disc_number, t->disc_subtitle,
-                     t->year, t->cover_path);
+                     t->year, t->cover_path, t->duration);
 }
 
 void track_free(Track *t) {
