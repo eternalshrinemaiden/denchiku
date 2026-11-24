@@ -8,6 +8,12 @@
 #include <adwaita.h>
 #include <gst/gst.h>
 
+#ifdef G_OS_WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 typedef struct {
     Player *player;
     GtkWidget *window;
@@ -97,7 +103,53 @@ static void on_activate(AdwApplication *app, gpointer user_data) {
     scanner_scan_async(NULL, on_initial_scan_done, ctx);
 }
 
+#ifdef G_OS_WIN32
+/* На Windows приложение распространяется как набор файлов рядом с exe.
+ * Каталоги данных (тема иконок, схемы GSettings) и плагинов GStreamer задаём
+ * относительно расположения самого exe — иначе GTK и GStreamer их не найдут.
+ * На Linux функция пустая и на сборку не влияет. */
+static void setup_windows_bundle_dirs(void) {
+    wchar_t wpath[MAX_PATH];
+    DWORD len = GetModuleFileNameW(NULL, wpath, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return;
+
+    char *exe_path = g_utf16_to_utf8((const gunichar2 *)wpath, -1, NULL, NULL, NULL);
+    if (exe_path == NULL) return;
+    char *exe_dir = g_path_get_dirname(exe_path);
+    g_free(exe_path);
+
+    /* Плагины GStreamer: playbin, discoverer, декодеры и вывод звука. */
+    char *gst_plugins = g_build_filename(exe_dir, "lib", "gstreamer-1.0", NULL);
+    if (g_file_test(gst_plugins, G_FILE_TEST_IS_DIR)) {
+        g_setenv("GST_PLUGIN_PATH", gst_plugins, TRUE);
+        g_setenv("GST_PLUGIN_SYSTEM_PATH", gst_plugins, TRUE);
+    }
+    g_free(gst_plugins);
+
+    char *gst_scanner = g_build_filename(exe_dir, "gst-plugin-scanner.exe", NULL);
+    if (g_file_test(gst_scanner, G_FILE_TEST_EXISTS))
+        g_setenv("GST_PLUGIN_SCANNER", gst_scanner, TRUE);
+    g_free(gst_scanner);
+
+    /* Тема иконок Adwaita ищется в $XDG_DATA_DIRS/icons. */
+    char *share = g_build_filename(exe_dir, "share", NULL);
+    if (g_file_test(share, G_FILE_TEST_IS_DIR))
+        g_setenv("XDG_DATA_DIRS", share, TRUE);
+    g_free(share);
+
+    char *schemas = g_build_filename(exe_dir, "share", "glib-2.0", "schemas", NULL);
+    if (g_file_test(schemas, G_FILE_TEST_IS_DIR))
+        g_setenv("GSETTINGS_SCHEMA_DIR", schemas, TRUE);
+    g_free(schemas);
+
+    g_free(exe_dir);
+}
+#else
+static void setup_windows_bundle_dirs(void) {}
+#endif
+
 int main(int argc, char **argv) {
+    setup_windows_bundle_dirs();
     gst_init(&argc, &argv);
 
     AppContext ctx = {0};
