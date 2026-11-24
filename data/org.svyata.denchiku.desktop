@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=keruu
+Name=Denchiku
 Comment=Аудиоплеер для рабочего стола GNOME
 Comment[en]=Audio player for the GNOME desktop
-Exec=keruu
-Icon=org.svyata.keruu
+Exec=denchiku
+Icon=org.svyata.denchiku
 Terminal=false
 Categories=GTK;AudioVideo;Audio;Player;
 Keywords=audio;music;player;library;

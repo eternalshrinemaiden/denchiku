@@ -5,7 +5,7 @@
 #define FAVORITE_FILE "favorites.m3u8"
 
 static char *get_data_playlists_dir(void) {
-    return g_build_filename(g_get_user_data_dir(), "keruu", "playlists", NULL);
+    return g_build_filename(g_get_user_data_dir(), "denchiku", "playlists", NULL);
 }
 
 static char *get_favorites_path(void) {
@@ -313,12 +313,9 @@ static gboolean write_raw_lines(const char *path, GPtrArray *lines) {
     return ok;
 }
 
-gboolean playlist_add_uri(const Playlist *pl, const char *uri) {
-    if (!pl || !uri || !*uri) return FALSE;
-    if (playlist_contains_uri(pl, uri)) return TRUE;
-
-    /* Дописываем одну строку, не перегенерируя файл: так сохраняются метаданные
-     * и относительные пути плейлистов, которые созданы не приложением. */
+/* Дописывает строку URI в конец, не перегенерируя файл: так сохраняются
+ * метаданные и относительные пути плейлистов, созданных не приложением. */
+static gboolean append_uri(const Playlist *pl, const char *uri) {
     GPtrArray *lines = load_raw_lines(pl);
     if (lines->len > 0) {
         const char *last = g_ptr_array_index(lines, lines->len - 1);
@@ -332,6 +329,18 @@ gboolean playlist_add_uri(const Playlist *pl, const char *uri) {
 
     invalidate_uri_cache((Playlist *)pl);
     return ok;
+}
+
+gboolean playlist_add_uri(const Playlist *pl, const char *uri) {
+    if (!pl || !uri || !*uri) return FALSE;
+    if (playlist_contains_uri(pl, uri)) return TRUE;
+    return append_uri(pl, uri);
+}
+
+/* Добавляет URI даже если он уже есть — вторая копия трека в плейлисте. */
+gboolean playlist_add_uri_dup(const Playlist *pl, const char *uri) {
+    if (!pl || !uri || !*uri) return FALSE;
+    return append_uri(pl, uri);
 }
 
 gboolean playlist_remove_uri(const Playlist *pl, const char *uri) {

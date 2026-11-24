@@ -3,7 +3,7 @@
 
 /* Настройки разбиения тегов (tag-splitting). Для исполнителей и жанров хранится
  * собственный список разделителей, который можно редактировать в окне настроек.
- * Хранятся в ~/.config/keruu/settings.ini. */
+ * Хранятся в ~/.config/denchiku/settings.ini. */
 
 typedef struct {
     gboolean  enabled;     /* включено ли разбиение для этой категории */
@@ -42,3 +42,14 @@ void tag_split_add_separator(gboolean artists, const char *separator);
 
 /* Удаляет разделитель, если он есть. */
 void tag_split_remove_separator(gboolean artists, const char *separator);
+
+/* ===== внешний редактор тегов =====
+ * Denchiku сам теги не правит: для этого запускается выбранное пользователем
+ * приложение. Значение — идентификатор .desktop, путь к .desktop-файлу или путь
+ * к исполняемому файлу; пустая строка означает «не выбрано». */
+
+/* Выбранный редактор тегов (может быть ""). Возвращается внутренняя строка. */
+const char *settings_tag_editor(void);
+
+/* Устанавливает редактор тегов и сохраняет настройки. NULL/"" очищает выбор. */
+void settings_set_tag_editor(const char *editor);

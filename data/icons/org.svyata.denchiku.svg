@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="128"
+   height="128"
+   viewBox="0 0 128 128"
+   version="1.1"
+   id="denchiku-icon"
+   sodipodi:docname="org.svyata.denchiku.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview23"
+     pagecolor="#505050"
+     bordercolor="#ffffff"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="1"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="6.25"
+     inkscape:cx="63.92"
+     inkscape:cy="87.36"
+     inkscape:window-width="1920"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="deck" />
+  <defs
+     id="defs8">
+    <linearGradient
+       id="wood-top"
+       x1="0"
+       y1="0"
+       x2="0"
+       y2="1">
+      <stop
+         offset="0"
+         stop-color="#f66151"
+         id="stop1" />
+      <stop
+         offset="1"
+         stop-color="#ed333b"
+         id="stop2" />
+    </linearGradient>
+    <linearGradient
+       id="wood-front"
+       x1="0"
+       y1="0"
+       x2="1"
+       y2="0">
+      <stop
+         offset="0"
+         stop-color="#c01c28"
+         id="stop3" />
+      <stop
+         offset="0.5"
+         stop-color="#e01b3b"
+         id="stop4" />
+      <stop
+         offset="1"
+         stop-color="#a51d2d"
+         id="stop5" />
+    </linearGradient>
+    <linearGradient
+       id="metal-grad"
+       x1="0"
+       y1="0"
+       x2="1"
+       y2="1">
+      <stop
+         offset="0"
+         stop-color="#f6f5f4"
+         id="stop6" />
+      <stop
+         offset="0.5"
+         stop-color="#c0bfbc"
+         id="stop7" />
+      <stop
+         offset="1"
+         stop-color="#77767b"
+         id="stop8" />
+    </linearGradient>
+  </defs>
+  <g
+     id="deck"
+     transform="translate(64,62) scale(1.11) translate(-64,-62)">
+    <rect
+       x="12"
+       y="32.795731"
+       width="104"
+       height="78"
+       rx="10"
+       ry="10"
+       fill="#000000"
+       opacity="0.18"
+       id="rect8" />
+    <rect
+       x="12"
+       y="28.795698"
+       width="104"
+       height="78"
+       rx="10"
+       ry="10"
+       fill="url(#wood-front)"
+       id="rect9" />
+    <rect
+       x="12"
+       y="18.795685"
+       width="104"
+       height="78"
+       rx="10"
+       ry="10"
+       fill="url(#wood-top)"
+       id="rect10" />
+    <path
+       d="m 22,19.295698 h 84 a 9.5,9.5 0 0 1 9.5,9.5 v 1 a 9.5,9.5 0 0 0 -9.5,-9.5 H 22 a 9.5,9.5 0 0 0 -9.5,9.5 v -1 a 9.5,9.5 0 0 1 9.5,-9.5 z"
+       fill="#ffffff"
+       opacity="0.25"
+       id="path10" />
+    <circle
+       cx="54"
+       cy="57.795731"
+       r="32"
+       fill="#1c1924"
+       id="circle10" />
+    <circle
+       cx="54"
+       cy="57.522453"
+       fill="none"
+       stroke="#ffffff"
+       stroke-width="0.6"
+       opacity="0.2"
+       id="circle11"
+       r="25"
+       style="opacity:0.181" />
+    <circle
+       cx="54"
+       cy="57.522453"
+       fill="none"
+       stroke="#ffffff"
+       stroke-width="0.6"
+       opacity="0.22"
+       id="circle12"
+       style="display:inline;opacity:0.181"
+       r="20" />
+    <circle
+       cx="54"
+       cy="57.522453"
+       fill="none"
+       stroke="#ffffff"
+       stroke-width="0.6"
+       opacity="0.18"
+       id="circle13"
+       r="15"
+       style="opacity:0.181" />
+    <path
+       d="m 32,36.795698 a 30,30 0 0 1 44,0 l -14,13 a 10,10 0 0 0 -16,0 z"
+       fill="#ffffff"
+       opacity="0.07"
+       id="path13" />
+    <path
+       d="m 76,78.795698 a 30,30 0 0 1 -44,0 l 14,-13 a 10,10 0 0 0 16,0 z"
+       fill="#ffffff"
+       opacity="0.07"
+       id="path14" />
+    <circle
+       cx="54"
+       cy="57.795731"
+       r="10"
+       fill="#ed333b"
+       id="circle14" />
+    <circle
+       cx="54"
+       cy="57.795731"
+       r="2.2"
+       fill="#deddda"
+       id="circle15" />
+    <circle
+       cx="54"
+       cy="57.795731"
+       r="1"
+       fill="#5e5c64"
+       id="circle16" />
+    <circle
+       cx="23"
+       cy="85.795731"
+       r="3.5"
+       fill="#3d3846"
+       id="circle17" />
+    <circle
+       cx="23"
+       cy="85.295731"
+       r="2.5"
+       fill="#9a9996"
+       id="circle18" />
+    <line
+       x1="23"
+       y1="85.295731"
+       x2="24.5"
+       y2="83.795731"
+       stroke="#241f31"
+       stroke-width="1"
+       stroke-linecap="round"
+       id="line18" />
+    <circle
+       cx="31"
+       cy="85.795731"
+       r="1.5"
+       fill="#33d17a"
+       id="circle19" />
+    <circle
+       cx="99"
+       cy="34.795731"
+       r="8"
+       fill="#3d3846"
+       id="circle20" />
+    <circle
+       cx="99"
+       cy="33.795731"
+       r="6.5"
+       fill="url(#metal-grad)"
+       id="circle21" />
+    <rect
+       x="95.5"
+       y="23.795685"
+       width="7"
+       height="6"
+       rx="1.5"
+       fill="#5e5c64"
+       id="rect21" />
+    <path
+       d="m 99,35.795698 -3,27 -13,12"
+       fill="none"
+       stroke="#000000"
+       stroke-width="3.5"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       opacity="0.3"
+       id="path21" />
+    <path
+       d="m 99,33.795698 -3,27 -13,12"
+       fill="none"
+       stroke="url(#metal-grad)"
+       stroke-width="3"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       id="path22" />
+    <circle
+       cx="99"
+       cy="33.795731"
+       r="3"
+       fill="#5e5c64"
+       id="circle22" />
+    <g
+       transform="rotate(42,-53.319638,144.50898)"
+       id="g23">
+      <rect
+         x="-2.5"
+         y="-1"
+         width="5"
+         height="8"
+         rx="1"
+         fill="#241f31"
+         id="rect22" />
+      <rect
+         x="-1.5"
+         y="5"
+         width="3"
+         height="3"
+         fill="#ed333b"
+         id="rect23" />
+    </g>
+  </g>
+</svg>

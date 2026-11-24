@@ -314,6 +314,52 @@ static const char *best_artist_cover(GPtrArray *tracks, const char *artist) {
 
 /* ===== построение страницы ===== */
 
+/* TRUE, если тег (с учётом разбиения) содержит исполнителя. */
+static gboolean tag_has_artist(const char *tag, const char *artist) {
+    char **names = track_split_artists(tag);
+    if (!names) return FALSE;
+
+    gboolean found = FALSE;
+    for (guint i = 0; names[i] != NULL; i++) {
+        if (g_strcmp0(names[i], artist) == 0) {
+            found = TRUE;
+            break;
+        }
+    }
+    g_strfreev(names);
+    return found;
+}
+
+/* Собирает треки исполнителя из всей медиатеки так же, как раздел «Исполнители»:
+ * исполнитель альбома и (если отличается) исполнитель трека, с учётом разбиения
+ * тегов. Возвращает GPtrArray<Track*> (заимствованные треки). */
+static GPtrArray *collect_artist_tracks(GPtrArray *all_tracks, const char *artist) {
+    GPtrArray *bucket = g_ptr_array_new();
+    for (guint i = 0; i < all_tracks->len; i++) {
+        Track *t = g_ptr_array_index(all_tracks, i);
+        gboolean match = tag_has_artist(t->album_artist, artist);
+        if (!match && g_strcmp0(t->artist, t->album_artist) != 0) {
+            match = tag_has_artist(t->artist, artist);
+        }
+        if (match) g_ptr_array_add(bucket, t);
+    }
+    return bucket;
+}
+
+void artist_detail_page_open(AdwNavigationView *nav, Player *player,
+                             GPtrArray *all_tracks, const char *artist,
+                             ArtistOpenAlbumFn on_open_album, gpointer user_data) {
+    if (!nav || !all_tracks || !artist || !*artist) return;
+
+    GPtrArray *bucket = collect_artist_tracks(all_tracks, artist);
+    if (bucket->len > 0) {
+        AdwNavigationPage *page = artist_detail_page_create(player, bucket, all_tracks,
+                                                            artist, on_open_album, user_data);
+        if (page) adw_navigation_view_push(nav, page);
+    }
+    g_ptr_array_unref(bucket);
+}
+
 AdwNavigationPage *artist_detail_page_create(Player *player,
                                              GPtrArray *artist_tracks,
                                              GPtrArray *all_tracks,

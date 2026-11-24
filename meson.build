@@ -1,5 +1,5 @@
-project('keruu', 'c',
-  version: '0.1.0',
+project('denchiku', 'c',
+  version: '0.2.0',
   default_options: ['warning_level=2', 'c_std=c11']
 )
 
@@ -15,10 +15,10 @@ inc = include_directories('src', 'src/ui')
 gnome = import('gnome')
 
 resources = gnome.compile_resources(
-  'keruu-resources',
-  'src/keruu.gresource.xml',
+  'denchiku-resources',
+  'src/denchiku.gresource.xml',
   source_dir: 'src',
-  c_name: 'keruu',
+  c_name: 'denchiku',
 )
 
 sources = files(
@@ -26,13 +26,16 @@ sources = files(
   'src/track.c',
   'src/cache.c',
   'src/scanner.c',
+  'src/watcher.c',
   'src/playlist.c',
   'src/player.c',
   'src/state.c',
   'src/settings.c',
   'src/stats.c',
+  'src/tag_editor.c',
   'src/ui/ui_helpers.c',
   'src/ui/track_menu.c',
+  'src/ui/track_info_dialog.c',
   'src/ui/track_list.c',
   'src/ui/view_controls.c',
   'src/ui/media_browser.c',
@@ -50,19 +53,19 @@ sources = files(
   'src/ui/window.c',
 )
 
-executable('keruu', sources, resources,
+executable('denchiku', sources, resources,
   include_directories: inc,
   dependencies: deps,
   install: true,
 )
 
 # Файлы интеграции с рабочим столом нужны для Flatpak и системной установки.
-install_data('data/org.svyata.keruu.desktop',
+install_data('data/org.svyata.denchiku.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
-install_data('data/org.svyata.keruu.metainfo.xml',
+install_data('data/org.svyata.denchiku.metainfo.xml',
   install_dir: get_option('datadir') / 'metainfo',
 )
-install_data('data/icons/org.svyata.keruu.svg',
+install_data('data/icons/org.svyata.denchiku.svg',
   install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
 )

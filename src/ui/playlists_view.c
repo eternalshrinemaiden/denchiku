@@ -1,5 +1,6 @@
 #include "playlists_view.h"
 #include "album_detail_page.h"
+#include "artist_detail_page.h"
 #include "track.h"
 #include "track_list.h"
 #include "ui_helpers.h"
@@ -19,6 +20,11 @@ struct _PlaylistsView {
     ViewControls *controls;
     GtkWidget *title_widget;
     GtkWidget *play_btn;
+    GtkWidget *shuffle_btn;
+    /* Намерение перемешивания: применяется только при запуске (кнопка
+     * «Воспроизвести» или клик по треку), сам переключатель текущее
+     * воспроизведение не трогает. */
+    gboolean shuffle_pending;
 
     GPtrArray *current_tracks; /* Track* показанного плейлиста */
     char *current_path;
@@ -31,9 +37,23 @@ struct _PlaylistsView {
 static void on_play_all(GtkButton *btn, gpointer user_data) {
     (void)btn;
     PlaylistsView *pv = user_data;
-    if (pv->current_tracks && pv->current_tracks->len > 0) {
-        player_set_queue_and_play(pv->player, pv->current_tracks, 0);
-    }
+    guint n = track_list_get_visible_count(pv->track_list);
+    if (n == 0) return;
+
+    if (pv->shuffle_pending) player_set_shuffle(pv->player, TRUE);
+    guint start = pv->shuffle_pending ? (guint)g_random_int_range(0, (gint)n) : 0;
+    track_list_play_position(pv->track_list, start);
+}
+
+static void on_shuffle_toggled(GtkToggleButton *btn, gpointer user_data) {
+    PlaylistsView *pv = user_data;
+    pv->shuffle_pending = gtk_toggle_button_get_active(btn);
+}
+
+static void on_track_activated(TrackList *tl, guint position, gpointer user_data) {
+    PlaylistsView *pv = user_data;
+    if (pv->shuffle_pending) player_set_shuffle(pv->player, TRUE);
+    track_list_play_position(tl, position);
 }
 
 static void on_controls_changed(ViewControls *vc, gpointer user_data) {
@@ -68,6 +88,7 @@ static void fill_current(PlaylistsView *pv) {
     adw_window_title_set_subtitle(ADW_WINDOW_TITLE(pv->title_widget), sub);
     g_free(sub);
     gtk_widget_set_sensitive(pv->play_btn, n > 0);
+    gtk_widget_set_sensitive(pv->shuffle_btn, n > 0);
 }
 
 /* ===================== боковая панель ===================== */
@@ -131,23 +152,53 @@ static GtkWidget *create_playlist_menu(PlaylistsView *pv, const char *path, GtkW
     return popover;
 }
 
-static void on_playlist_popover_closed(GtkPopover *popover, gpointer user_data) {
-    (void)user_data;
-    gtk_widget_unparent(GTK_WIDGET(popover));
+/* Убирает popover после закрытия. Откладываем на idle: уничтожать виджет прямо
+ * в обработчике сигнала "closed" нельзя — GTK ещё работает с ним. */
+static gboolean unparent_idle(gpointer data) {
+    gtk_widget_unparent(GTK_WIDGET(data));
+    return G_SOURCE_REMOVE;
 }
 
-static void show_playlist_menu(GtkWidget *row, double x, double y) {
+static void on_playlist_popover_closed(GtkPopover *popover, gpointer user_data) {
+    (void)user_data;
+    g_object_ref(popover);
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, unparent_idle, popover, g_object_unref);
+}
+
+/* Данные отложенного показа меню: строка и точка клика в её координатах. */
+typedef struct {
+    GtkWidget *row; /* слабая ссылка: строка живёт, пока показано меню */
+    double x;
+    double y;
+} PlaylistMenuShow;
+
+static gboolean show_playlist_menu_idle(gpointer data) {
+    PlaylistMenuShow *s = data;
+    GtkWidget *row = s->row;
+
     PlaylistsView *pv = g_object_get_data(G_OBJECT(row), "playlists-view");
     const char *path = g_object_get_data(G_OBJECT(row), "playlist-path");
-    if (!pv || !path) return;
+    if (!pv || !path) return G_SOURCE_REMOVE;
 
     GtkWidget *popover = create_playlist_menu(pv, path, row);
     gtk_widget_set_parent(popover, row);
 
-    GdkRectangle rect = { .x = (int)x, .y = (int)y, .width = 1, .height = 1 };
+    GdkRectangle rect = { .x = (int)s->x, .y = (int)s->y, .width = 1, .height = 1 };
     gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
     g_signal_connect(popover, "closed", G_CALLBACK(on_playlist_popover_closed), NULL);
     gtk_popover_popup(GTK_POPOVER(popover));
+    return G_SOURCE_REMOVE;
+}
+
+static void show_playlist_menu(GtkWidget *row, double x, double y) {
+    /* Показываем меню из idle, а не прямо в обработчике жеста: так popover не
+     * создаётся внутри обработки события и строка гарантированно прикреплена к
+     * окну (иначе серия теряется и действия остаются без адресата). */
+    PlaylistMenuShow *s = g_new0(PlaylistMenuShow, 1);
+    s->row = row;
+    s->x = x;
+    s->y = y;
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, show_playlist_menu_idle, s, g_free);
 }
 
 static void on_playlist_secondary_click(GtkGestureClick *gesture, int n_press,
@@ -327,12 +378,11 @@ PlaylistsView *playlists_view_new(Player *player, AdwOverlaySplitView *split_vie
     pv->title_widget = adw_window_title_new("Плейлист", NULL);
     adw_header_bar_set_title_widget(ADW_HEADER_BAR(hb), pv->title_widget);
 
-    pv->play_btn = gtk_button_new_with_label("Воспроизвести");
-    gtk_widget_add_css_class(pv->play_btn, "suggested-action");
-    gtk_widget_add_css_class(pv->play_btn, "pill");
-    gtk_widget_set_valign(pv->play_btn, GTK_ALIGN_CENTER);
+    /* «Воспроизвести» и «Перемешать» — слева в шапке, единым блоком. */
+    GtkWidget *play_group = ui_create_play_shuffle_group(&pv->play_btn, &pv->shuffle_btn);
     g_signal_connect(pv->play_btn, "clicked", G_CALLBACK(on_play_all), pv);
-    adw_header_bar_pack_end(ADW_HEADER_BAR(hb), pv->play_btn);
+    g_signal_connect(pv->shuffle_btn, "toggled", G_CALLBACK(on_shuffle_toggled), pv);
+    adw_header_bar_pack_start(ADW_HEADER_BAR(hb), play_group);
 
     pv->controls = view_controls_new(TRUE, on_controls_changed, pv);
     adw_header_bar_pack_end(ADW_HEADER_BAR(hb), view_controls_get_widget(pv->controls));
@@ -340,6 +390,8 @@ PlaylistsView *playlists_view_new(Player *player, AdwOverlaySplitView *split_vie
     TrackListConfig tl_cfg = {
         .context = TRACK_CONTEXT_TRACKS,
         .controls = pv->controls,
+        .on_activate = on_track_activated,
+        .user_data = pv,
     };
     pv->track_list = track_list_new(player, &tl_cfg);
 
@@ -413,14 +465,43 @@ void playlists_view_refresh_playing(PlaylistsView *pv, const char *playing_uri) 
     ui_highlight_playing_on_page(page, playing_uri);
 }
 
-/* Альбом открывается в этом же стеке: раздел плейлистов не переключается. */
-void playlists_view_open_album(PlaylistsView *pv, const char *album, const char *album_artist) {
-    if (!pv->library || !album || !*album) return;
-
+/* Страница альбома кладётся в стек этого раздела: раздел плейлистов не
+ * переключается. */
+static void push_album_page(PlaylistsView *pv, const char *album, const char *album_artist) {
     GtkListBox *sublist = NULL;
     AdwNavigationPage *page = album_detail_page_create(pv->player, pv->library,
                                                        album, album_artist, &sublist);
     if (page) adw_navigation_view_push(pv->nav, page);
+}
+
+/* Обёртка под ArtistOpenAlbumFn: альбом со страницы исполнителя открывается в
+ * этом же стеке, страница исполнителя остаётся в истории. */
+static void on_open_album_for_artist(const char *album, const char *album_artist,
+                                     gpointer user_data) {
+    push_album_page(user_data, album, album_artist);
+}
+
+void playlists_view_open_album(PlaylistsView *pv, const char *album, const char *album_artist) {
+    if (!pv->library || !album || !*album) return;
+    push_album_page(pv, album, album_artist);
+}
+
+void playlists_view_open_artist(PlaylistsView *pv, const char *artist) {
+    if (!pv || !pv->library) return;
+    artist_detail_page_open(pv->nav, pv->player, pv->library, artist,
+                            on_open_album_for_artist, pv);
+}
+
+gboolean playlists_view_contains_uri(PlaylistsView *pv, const char *path, const char *uri) {
+    Playlist *pl = playlist_find_by_path(pv->playlists, path);
+    return pl && uri && playlist_contains_uri(pl, uri);
+}
+
+/* Перестраивает открытый плейлист, если изменён именно он. */
+static void refresh_current_if_open(PlaylistsView *pv, const char *path) {
+    if (pv->current_path && g_strcmp0(pv->current_path, path) == 0) {
+        fill_current(pv);
+    }
 }
 
 void playlists_view_add_uri(PlaylistsView *pv, const char *path, const char *uri) {
@@ -428,9 +509,23 @@ void playlists_view_add_uri(PlaylistsView *pv, const char *path, const char *uri
     if (!pl || !uri) return;
 
     playlist_add_uri(pl, uri);
-    if (pv->current_path && g_strcmp0(pv->current_path, path) == 0) {
-        fill_current(pv);
-    }
+    refresh_current_if_open(pv, path);
+}
+
+void playlists_view_add_uri_dup(PlaylistsView *pv, const char *path, const char *uri) {
+    Playlist *pl = playlist_find_by_path(pv->playlists, path);
+    if (!pl || !uri) return;
+
+    playlist_add_uri_dup(pl, uri);
+    refresh_current_if_open(pv, path);
+}
+
+void playlists_view_remove_uri(PlaylistsView *pv, const char *path, const char *uri) {
+    Playlist *pl = playlist_find_by_path(pv->playlists, path);
+    if (!pl || !uri) return;
+
+    playlist_remove_uri(pl, uri);
+    refresh_current_if_open(pv, path);
 }
 
 /* ===================== создание плейлиста ===================== */

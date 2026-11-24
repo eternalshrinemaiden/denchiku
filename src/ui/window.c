@@ -5,10 +5,13 @@
 #include "playlists_view.h"
 #include "queue_view.h"
 #include "scanner.h"
+#include "settings.h"
 #include "settings_dialog.h"
 #include "state.h"
 #include "stats.h"
+#include "tag_editor.h"
 #include "track.h"
+#include "track_info_dialog.h"
 #include "track_menu.h"
 #include "ui_helpers.h"
 #include "view_controls.h"
@@ -132,6 +135,41 @@ void main_window_set_scanning(GtkWidget *window, gboolean scanning) {
     }
 }
 
+/* ===== сведения о треке и внешний редактор тегов ===== */
+
+/* Пункт меню трека «Сведения»: окно с метаданными трека. */
+static void on_track_show_info(Track *track, gpointer user_data) {
+    WindowState *ws = user_data;
+    if (!track) return;
+    track_info_dialog_present(GTK_WINDOW(ws->window), track);
+}
+
+/* Кнопка-карандаш в шапке альбома: открывает все треки альбома во внешнем
+ * редакторе тегов (выбранном в настройках). */
+static void on_album_edit_tags(GPtrArray *tracks, gpointer user_data) {
+    WindowState *ws = user_data;
+    if (!tracks || tracks->len == 0) return;
+
+    GPtrArray *uris = g_ptr_array_new();
+    for (guint i = 0; i < tracks->len; i++) {
+        Track *t = g_ptr_array_index(tracks, i);
+        if (t->uri && *t->uri) g_ptr_array_add(uris, t->uri);
+    }
+
+    const char *editor = settings_tag_editor();
+    GError *err = NULL;
+    gboolean ok = tag_editor_launch(editor, uris, &err);
+    g_ptr_array_unref(uris);
+
+    if (!ok) {
+        AdwDialog *alert = adw_alert_dialog_new("Не удалось открыть редактор тегов",
+                                                err ? err->message : NULL);
+        adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "ok", "Ок");
+        adw_dialog_present(alert, ws->window);
+    }
+    if (err) g_error_free(err);
+}
+
 static void on_manual_scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
     (void)source;
     GtkWidget *win = GTK_WIDGET(user_data);
@@ -231,9 +269,9 @@ static void on_about_action(GSimpleAction *action, GVariant *param, gpointer use
     GtkWidget *win = GTK_WIDGET(user_data);
 
     AdwDialog *about = adw_about_dialog_new();
-    adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(about), "Keruu");
+    adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(about), "Denchiku");
     adw_about_dialog_set_application_icon(ADW_ABOUT_DIALOG(about), "folder-music-symbolic");
-    adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), "0.1.0");
+    adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), "0.2.0");
     adw_about_dialog_set_comments(ADW_ABOUT_DIALOG(about),
         "Быстрый и легкий аудиоплеер для рабочего стола GNOME на GTK 4, Libadwaita и GStreamer.");
     adw_about_dialog_set_license_type(ADW_ABOUT_DIALOG(about), GTK_LICENSE_GPL_3_0);
@@ -242,6 +280,19 @@ static void on_about_action(GSimpleAction *action, GVariant *param, gpointer use
     adw_about_dialog_set_developers(ADW_ABOUT_DIALOG(about), developers);
 
     adw_dialog_present(about, win);
+}
+
+/* Программно выбираем строку сайдбара по id раздела: подсветка и содержимое
+ * стека синхронизируются через row-selected. */
+static void select_sidebar_page(WindowState *ws, const char *page_id) {
+    for (GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(ws->sidebar_list));
+         row != NULL; row = gtk_widget_get_next_sibling(row)) {
+        if (!GTK_IS_LIST_BOX_ROW(row)) continue;
+        if (g_strcmp0(g_object_get_data(G_OBJECT(row), "page-id"), page_id) == 0) {
+            gtk_list_box_select_row(ws->sidebar_list, GTK_LIST_BOX_ROW(row));
+            return;
+        }
+    }
 }
 
 static void on_sidebar_row_selected(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
@@ -281,28 +332,30 @@ static void on_track_open_album(const char *album, const char *album_artist,
                             album, album_artist);
 }
 
-/* Программно выбирает раздел боковой панели по page-id: обработчик row-selected
- * переключит content_stack. */
-static void select_sidebar_section(WindowState *ws, const char *page_id) {
-    GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(ws->sidebar_list));
-    while (child) {
-        if (GTK_IS_LIST_BOX_ROW(child) &&
-            g_strcmp0(g_object_get_data(G_OBJECT(child), "page-id"), page_id) == 0) {
-            gtk_list_box_select_row(ws->sidebar_list, GTK_LIST_BOX_ROW(child));
-            return;
-        }
-        child = gtk_widget_get_next_sibling(child);
-    }
-}
-
-/* Пункт меню трека «Перейти к исполнителю»: страницы исполнителей есть только в
- * разделе «Исполнители», поэтому переключаем туда вкладку и открываем страницу. */
+/* Пункт меню трека «Перейти к исполнителю» и ссылка на исполнителя в шапке
+ * альбома: страница открывается в ТЕКУЩЕМ разделе (вкладка не переключается),
+ * как и «Открыть альбом». */
 static void on_track_open_artist(const char *artist, gpointer user_data) {
     WindowState *ws = user_data;
     if (!artist || !*artist) return;
 
-    select_sidebar_section(ws, "artists");
-    library_view_open_artist(ws->library_view, artist);
+    const char *section = gtk_stack_get_visible_child_name(ws->content_stack);
+    if (g_strcmp0(section, "playlists") == 0) {
+        playlists_view_open_artist(ws->playlists_view, artist);
+        return;
+    }
+    library_view_open_artist(ws->library_view, section ? section : "artists", artist);
+}
+
+/* Клик по жанру в шапке альбома: переключаемся на вкладку «Жанры» и делаем этот
+ * жанр активным фильтром. */
+static void on_album_open_genre(const char *genre, gpointer user_data) {
+    WindowState *ws = user_data;
+    if (!genre || !*genre) return;
+
+    select_sidebar_page(ws, "genres");
+    gtk_stack_set_visible_child_name(ws->content_stack, "genres");
+    library_view_select_genre(ws->library_view, genre);
 }
 
 /* ===== Плейлисты: колбэки для меню трека и сердечек ===== */
@@ -323,11 +376,69 @@ static GPtrArray *on_list_playlists(gpointer user_data) {
     return playlists_view_get_playlists(ws->playlists_view);
 }
 
-static void on_add_to_playlist(const char *path, const char *uri, gpointer user_data) {
+static gboolean on_playlist_has(const char *path, const char *uri, gpointer user_data) {
     WindowState *ws = user_data;
-    playlists_view_add_uri(ws->playlists_view, path, uri);
-    /* Плейлист может оказаться «Любимыми треками» — синхронизируем сердечки. */
-    track_menu_refresh_favorites();
+    return playlists_view_contains_uri(ws->playlists_view, path, uri);
+}
+
+/* Вопрос, когда трек уже есть в плейлисте: добавить вторую копию или удалить
+ * все копии. */
+typedef struct {
+    WindowState *ws;
+    char *path;
+    char *uri;
+} PlaylistAskCtx;
+
+static void playlist_ask_ctx_free(gpointer data) {
+    PlaylistAskCtx *ctx = data;
+    g_free(ctx->path);
+    g_free(ctx->uri);
+    g_free(ctx);
+}
+
+static void on_playlist_ask_response(AdwAlertDialog *dialog, const char *response,
+                                     gpointer user_data) {
+    (void)user_data;
+    PlaylistAskCtx *ctx = g_object_get_data(G_OBJECT(dialog), "playlist-ask-ctx");
+    if (!ctx) return;
+
+    if (g_strcmp0(response, "add") == 0) {
+        playlists_view_add_uri_dup(ctx->ws->playlists_view, ctx->path, ctx->uri);
+    } else if (g_strcmp0(response, "remove") == 0) {
+        playlists_view_remove_uri(ctx->ws->playlists_view, ctx->path, ctx->uri);
+    }
+}
+
+static void on_toggle_playlist(const char *path, const char *uri, gpointer user_data) {
+    WindowState *ws = user_data;
+    if (!path || !uri) return;
+
+    /* Трека в плейлисте нет — просто добавляем. */
+    if (!playlists_view_contains_uri(ws->playlists_view, path, uri)) {
+        playlists_view_add_uri(ws->playlists_view, path, uri);
+        track_menu_refresh_favorites();
+        return;
+    }
+
+    /* Трек уже в плейлисте: спрашиваем, добавить ещё раз или удалить. */
+    Playlist *pl = playlist_find_by_path(playlists_view_get_playlists(ws->playlists_view),
+                                         path);
+    AdwDialog *dialog = adw_alert_dialog_new("Трек уже в плейлисте",
+                                             pl ? pl->name : NULL);
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(dialog), "add", "Добавить ещё раз");
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(dialog), "remove", "Удалить");
+    adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "remove",
+                                             ADW_RESPONSE_DESTRUCTIVE);
+    adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "add");
+
+    PlaylistAskCtx *ctx = g_new0(PlaylistAskCtx, 1);
+    ctx->ws = ws;
+    ctx->path = g_strdup(path);
+    ctx->uri = g_strdup(uri);
+    g_object_set_data_full(G_OBJECT(dialog), "playlist-ask-ctx", ctx,
+                           playlist_ask_ctx_free);
+    g_signal_connect(dialog, "response", G_CALLBACK(on_playlist_ask_response), NULL);
+    adw_dialog_present(dialog, ws->window);
 }
 
 static void on_create_playlist_clicked(GtkButton *btn, gpointer user_data) {
@@ -540,10 +651,13 @@ GtkWidget *main_window_new(AdwApplication *app, Player *player) {
 g_signal_connect(ws->sidebar_list, "row-selected", G_CALLBACK(on_sidebar_row_selected), ws);
 track_menu_set_open_album_cb(on_track_open_album, ws);
 track_menu_set_open_artist_cb(on_track_open_artist, ws);
+track_menu_set_show_info_cb(on_track_show_info, ws);
 /* Карточки «другие альбомы» и ссылки на исполнителей на странице альбома ведут
  * туда же, куда соответствующие пункты меню трека. */
 album_detail_page_set_open_album_cb(on_track_open_album, ws);
 album_detail_page_set_open_artist_cb(on_track_open_artist, ws);
+album_detail_page_set_open_genre_cb(on_album_open_genre, ws);
+album_detail_page_set_edit_tags_cb(on_album_edit_tags, ws);
 gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sidebar_scroll), GTK_WIDGET(ws->sidebar_list));
 gtk_widget_set_vexpand(sidebar_scroll, TRUE);
 
@@ -568,7 +682,7 @@ gtk_stack_set_transition_type(ws->content_stack, GTK_STACK_TRANSITION_TYPE_CROSS
 ws->playlists_view = playlists_view_new(player, ws->split_view, ws->sidebar_list,
                                         ws->content_stack);
 track_menu_set_playlist_cbs(on_is_favorite, on_toggle_favorite, on_list_playlists,
-                            on_add_to_playlist, ws);
+                            on_playlist_has, on_toggle_playlist, ws);
 adw_overlay_split_view_set_content(ws->split_view, GTK_WIDGET(ws->content_stack));
 /* ================= 3. ПЛЕЕР: НИЖНИЙ БАР + ПОЛНОЭКРАННАЯ ШТОРКА ================= */
 

@@ -1,5 +1,6 @@
 #include "albums_view.h"
 #include "album_detail_page.h"
+#include "artist_detail_page.h"
 #include "media_browser.h"
 #include "track.h"
 #include "ui_helpers.h"
@@ -67,16 +68,28 @@ static void on_subpage_popped(AdwNavigationView *nav, AdwNavigationPage *page, g
     ((AlbumsView *)user_data)->active_sublist = NULL;
 }
 
-static void on_album_activated(GObject *item, gpointer user_data) {
-    AlbumsView *av = user_data;
-    AlbumItem *album = MC_ALBUM_ITEM(item);
-
+/* Страница альбома кладётся в стек этого раздела. Общий помощник для открытия
+ * из карточки, меню трека и карточек страницы исполнителя. */
+static void push_album_page(AlbumsView *av, const char *album, const char *album_artist) {
     AdwNavigationPage *page = album_detail_page_create(
-        av->player, av->tracks, album->album, album->artist, &av->active_sublist);
+        av->player, av->tracks, album, album_artist, &av->active_sublist);
 
     if (page) {
         adw_navigation_view_push(av->nav, page);
     }
+}
+
+/* Обёртка под ArtistOpenAlbumFn: карточка альбома на странице исполнителя
+ * открывается в этом же разделе, страница исполнителя остаётся в истории. */
+static void on_open_album_for_artist(const char *album, const char *album_artist,
+                                     gpointer user_data) {
+    push_album_page(user_data, album, album_artist);
+}
+
+static void on_album_activated(GObject *item, gpointer user_data) {
+    AlbumsView *av = user_data;
+    AlbumItem *album = MC_ALBUM_ITEM(item);
+    push_album_page(av, album->album, album->artist);
 }
 
 static void on_controls_changed(ViewControls *vc, gpointer user_data) {
@@ -186,13 +199,13 @@ void albums_view_open_album(AlbumsView *av, const char *album, const char *album
     if (av->root) {
         adw_navigation_view_pop_to_page(av->nav, av->root);
     }
+    push_album_page(av, album, album_artist);
+}
 
-    AdwNavigationPage *page = album_detail_page_create(
-        av->player, av->tracks, album, album_artist, &av->active_sublist);
-
-    if (page) {
-        adw_navigation_view_push(av->nav, page);
-    }
+void albums_view_open_artist(AlbumsView *av, const char *artist) {
+    if (!av || !av->tracks) return;
+    artist_detail_page_open(av->nav, av->player, av->tracks, artist,
+                            on_open_album_for_artist, av);
 }
 
 void albums_view_free(AlbumsView *av) {

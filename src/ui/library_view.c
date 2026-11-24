@@ -45,6 +45,10 @@ void library_view_regroup_genres(LibraryView *lv, GPtrArray *tracks) {
     genres_view_set_tracks(lv->genres, tracks);
 }
 
+void library_view_select_genre(LibraryView *lv, const char *genre) {
+    genres_view_select_genre(lv->genres, genre);
+}
+
 void library_view_refresh_playing(LibraryView *lv) {
     Track *cur = player_get_current_track(lv->player);
     const char *uri = cur ? cur->uri : NULL;
@@ -69,9 +73,18 @@ void library_view_open_album(LibraryView *lv, const char *section,
     }
 }
 
-void library_view_open_artist(LibraryView *lv, const char *artist) {
-    /* Страницы исполнителей есть только в разделе «Исполнители». */
-    artists_view_open_artist(lv->artists, artist);
+void library_view_open_artist(LibraryView *lv, const char *section, const char *artist) {
+    /* Открываем страницу исполнителя в том же разделе, где пользователь вызвал
+     * действие: вкладка не переключается, страница ложится в стек раздела. */
+    if (g_strcmp0(section, "albums") == 0) {
+        albums_view_open_artist(lv->albums, artist);
+    } else if (g_strcmp0(section, "genres") == 0) {
+        genres_view_open_artist(lv->genres, artist);
+    } else if (g_strcmp0(section, "tracks") == 0) {
+        tracks_view_open_artist(lv->tracks, artist);
+    } else {
+        artists_view_open_artist(lv->artists, artist);
+    }
 }
 
 ViewControls *library_view_get_view_controls(LibraryView *lv) {

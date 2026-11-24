@@ -4,13 +4,21 @@
 #include "settings.h"
 #include "stats.h"
 #include "ui/window.h"
+#include "watcher.h"
 #include <adwaita.h>
 #include <gst/gst.h>
 
 typedef struct {
     Player *player;
     GtkWidget *window;
+    Watcher *watcher;
 } AppContext;
+
+/* Батч обновлений от watcher'а: снимок медиатеки приходит целиком, окно само
+ * решает, нужно ли перестраивать виды. */
+static void on_watcher_changed(GPtrArray *tracks, gpointer user_data) {
+    main_window_set_tracks(GTK_WIDGET(user_data), tracks);
+}
 
 static void on_initial_scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
     (void)source;
@@ -22,6 +30,16 @@ static void on_initial_scan_done(GObject *source, GAsyncResult *res, gpointer us
         g_ptr_array_unref(fresh_tracks);
     }
     main_window_set_scanning(ctx->window, FALSE);
+
+    /* Живое слежение включаем после первичного скана: кэш уже заполнен, а
+     * файловые события начнут приходить в фоне. */
+    if (!ctx->watcher) {
+        ctx->watcher = watcher_new();
+        watcher_set_changed_cb(ctx->watcher, on_watcher_changed, ctx->window);
+        const char *music_dir = g_get_user_special_dir(G_USER_DIRECTORY_MUSIC);
+        if (!music_dir) music_dir = g_get_home_dir();
+        watcher_start(ctx->watcher, music_dir);
+    }
 }
 
 static void on_quit_action(GSimpleAction *action, GVariant *param, gpointer user_data) {
@@ -57,7 +75,7 @@ static void on_activate(AdwApplication *app, gpointer user_data) {
     /* Иконки-сердечки (контур/закрашенное) лежат в ресурсах приложения. */
     gtk_icon_theme_add_resource_path(
         gtk_icon_theme_get_for_display(gdk_display_get_default()),
-        "/org/svyata/keruu/icons");
+        "/org/svyata/denchiku/icons");
 
     ctx->window = main_window_new(app, ctx->player);
     gtk_window_present(GTK_WINDOW(ctx->window));
@@ -90,7 +108,7 @@ int main(int argc, char **argv) {
     /* Статистика прослушиваний — до запуска воспроизведения. */
     stats_load();
 
-    AdwApplication *app = adw_application_new("org.svyata.keruu", G_APPLICATION_DEFAULT_FLAGS);
+    AdwApplication *app = adw_application_new("org.svyata.denchiku", G_APPLICATION_DEFAULT_FLAGS);
 
     /* Действие выхода по Ctrl+Q */
     const GActionEntry app_entries[] = {
@@ -113,6 +131,8 @@ int main(int argc, char **argv) {
 
     int status = g_application_run(G_APPLICATION(app), argc, argv);
 
+    if (ctx.watcher) watcher_free(ctx.watcher);
+    cache_flush();
     g_object_unref(app);
     player_free(ctx.player);
 

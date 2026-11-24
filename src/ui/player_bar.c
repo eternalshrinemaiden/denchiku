@@ -59,17 +59,17 @@ static void apply_mode(PlayerBar *pb, LayoutMode mode);
 /* Корневой контейнер бара. GtkWidget в GTK4 вызывает size_allocate только
  * когда у виджета НЕТ менеджера компоновки, поэтому реагируем на ресайз через
  * GtkCustomLayout.allocate (он вызывается всегда). */
-#define KERUU_TYPE_PLAYER_BAR_ROOT (keruu_player_bar_root_get_type())
-G_DECLARE_FINAL_TYPE(KeruuPlayerBarRoot, keruu_player_bar_root, KERUU, PLAYER_BAR_ROOT, GtkWidget)
+#define DENCHIKU_TYPE_PLAYER_BAR_ROOT (denchiku_player_bar_root_get_type())
+G_DECLARE_FINAL_TYPE(DenchikuPlayerBarRoot, denchiku_player_bar_root, DENCHIKU, PLAYER_BAR_ROOT, GtkWidget)
 
-struct _KeruuPlayerBarRoot {
+struct _DenchikuPlayerBarRoot {
     GtkWidget parent_instance;
     PlayerBar *bar;
     GtkWidget *content;
     GdkTexture *background;
 };
 
-G_DEFINE_TYPE(KeruuPlayerBarRoot, keruu_player_bar_root, GTK_TYPE_WIDGET)
+G_DEFINE_TYPE(DenchikuPlayerBarRoot, denchiku_player_bar_root, GTK_TYPE_WIDGET)
 
 enum {
     ROOT_PROP_0,
@@ -79,8 +79,8 @@ enum {
 };
 static GParamSpec *root_props[ROOT_PROP_LAST];
 
-static void keruu_player_bar_root_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
-    KeruuPlayerBarRoot *self = KERUU_PLAYER_BAR_ROOT(object);
+static void denchiku_player_bar_root_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+    DenchikuPlayerBarRoot *self = DENCHIKU_PLAYER_BAR_ROOT(object);
     switch (prop_id) {
     case ROOT_PROP_MOBILE:
         g_value_set_boolean(value, self->bar && self->bar->layout_mode == LAYOUT_COMPACT);
@@ -90,8 +90,8 @@ static void keruu_player_bar_root_get_property(GObject *object, guint prop_id, G
     }
 }
 
-static void keruu_player_bar_root_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
-    KeruuPlayerBarRoot *self = KERUU_PLAYER_BAR_ROOT(object);
+static void denchiku_player_bar_root_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
+    DenchikuPlayerBarRoot *self = DENCHIKU_PLAYER_BAR_ROOT(object);
     switch (prop_id) {
     case ROOT_PROP_MOBILE:
         if (self->bar && self->bar->variant == PLAYER_BAR_VARIANT_BAR) {
@@ -108,17 +108,17 @@ static void keruu_player_bar_root_set_property(GObject *object, guint prop_id, c
     }
 }
 
-static void keruu_player_bar_root_measure(GtkWidget *widget, GtkOrientation orientation, int for_size,
+static void denchiku_player_bar_root_measure(GtkWidget *widget, GtkOrientation orientation, int for_size,
                                           int *minimum, int *natural, int *min_baseline, int *nat_baseline) {
-    KeruuPlayerBarRoot *self = KERUU_PLAYER_BAR_ROOT(widget);
+    DenchikuPlayerBarRoot *self = DENCHIKU_PLAYER_BAR_ROOT(widget);
     /* Бар/шторка не должны задавать минимальную ширину окна: на узкой ширине
      * включается компактный режим, а до этого контент может ужаться. */
     ui_measure_min_width(self->content, orientation, for_size,
                          minimum, natural, min_baseline, nat_baseline);
 }
 
-static void keruu_player_bar_root_allocate(GtkWidget *widget, int width, int height, int baseline) {
-    KeruuPlayerBarRoot *self = KERUU_PLAYER_BAR_ROOT(widget);
+static void denchiku_player_bar_root_allocate(GtkWidget *widget, int width, int height, int baseline) {
+    DenchikuPlayerBarRoot *self = DENCHIKU_PLAYER_BAR_ROOT(widget);
     if (!self->content) return;
 
     gboolean is_bar = self->bar && self->bar->variant == PLAYER_BAR_VARIANT_BAR;
@@ -140,8 +140,8 @@ static void keruu_player_bar_root_allocate(GtkWidget *widget, int width, int hei
 
 /* Рисуем размытую обложку ПОД дочерними виджетами: сначала фон, затем
  * штатная отрисовка GtkWidget (CSS-фон + дети). */
-static void keruu_player_bar_root_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
-    KeruuPlayerBarRoot *self = KERUU_PLAYER_BAR_ROOT(widget);
+static void denchiku_player_bar_root_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
+    DenchikuPlayerBarRoot *self = DENCHIKU_PLAYER_BAR_ROOT(widget);
 
     if (self->background) {
         int width = gtk_widget_get_width(widget);
@@ -177,24 +177,24 @@ static void keruu_player_bar_root_snapshot(GtkWidget *widget, GtkSnapshot *snaps
         }
     }
 
-    GTK_WIDGET_CLASS(keruu_player_bar_root_parent_class)->snapshot(widget, snapshot);
+    GTK_WIDGET_CLASS(denchiku_player_bar_root_parent_class)->snapshot(widget, snapshot);
 }
 
-static void keruu_player_bar_root_dispose(GObject *object) {
-    KeruuPlayerBarRoot *self = KERUU_PLAYER_BAR_ROOT(object);
+static void denchiku_player_bar_root_dispose(GObject *object) {
+    DenchikuPlayerBarRoot *self = DENCHIKU_PLAYER_BAR_ROOT(object);
     g_clear_pointer(&self->content, gtk_widget_unparent);
     g_clear_object(&self->background);
-    G_OBJECT_CLASS(keruu_player_bar_root_parent_class)->dispose(object);
+    G_OBJECT_CLASS(denchiku_player_bar_root_parent_class)->dispose(object);
 }
 
-static void keruu_player_bar_root_class_init(KeruuPlayerBarRootClass *klass) {
+static void denchiku_player_bar_root_class_init(DenchikuPlayerBarRootClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
-    object_class->dispose = keruu_player_bar_root_dispose;
-    object_class->get_property = keruu_player_bar_root_get_property;
-    object_class->set_property = keruu_player_bar_root_set_property;
+    object_class->dispose = denchiku_player_bar_root_dispose;
+    object_class->get_property = denchiku_player_bar_root_get_property;
+    object_class->set_property = denchiku_player_bar_root_set_property;
 
     GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-    widget_class->snapshot = keruu_player_bar_root_snapshot;
+    widget_class->snapshot = denchiku_player_bar_root_snapshot;
 
     root_props[ROOT_PROP_MOBILE] =
         g_param_spec_boolean("mobile", NULL, NULL, FALSE,
@@ -202,13 +202,13 @@ static void keruu_player_bar_root_class_init(KeruuPlayerBarRootClass *klass) {
     g_object_class_install_properties(object_class, ROOT_PROP_LAST, root_props);
 }
 
-static void keruu_player_bar_root_init(KeruuPlayerBarRoot *self) {
+static void denchiku_player_bar_root_init(DenchikuPlayerBarRoot *self) {
     self->bar = NULL;
     self->content = NULL;
     self->background = NULL;
 
     GtkLayoutManager *layout = gtk_custom_layout_new(NULL,
-        keruu_player_bar_root_measure, keruu_player_bar_root_allocate);
+        denchiku_player_bar_root_measure, denchiku_player_bar_root_allocate);
     gtk_widget_set_layout_manager(GTK_WIDGET(self), layout);
 }
 
@@ -620,7 +620,7 @@ static void set_cover(PlayerBar *pb, const char *path) {
     gtk_box_append(GTK_BOX(pb->cover_box), cover);
 
     /* Обновляем размытый фон на основе новой обложки. */
-    KeruuPlayerBarRoot *root = KERUU_PLAYER_BAR_ROOT(pb->widget);
+    DenchikuPlayerBarRoot *root = DENCHIKU_PLAYER_BAR_ROOT(pb->widget);
     g_clear_object(&root->background);
     if (path && *path) {
         root->background = ui_create_cover_texture(path, BACKGROUND_SIZE);
@@ -633,7 +633,7 @@ PlayerBar *player_bar_new(Player *player, PlayerBarVariant variant) {
     pb->player = player;
     pb->variant = variant;
 
-    KeruuPlayerBarRoot *root = g_object_new(KERUU_TYPE_PLAYER_BAR_ROOT, NULL);
+    DenchikuPlayerBarRoot *root = g_object_new(DENCHIKU_TYPE_PLAYER_BAR_ROOT, NULL);
     root->bar = pb;
     gtk_widget_set_overflow(GTK_WIDGET(root), GTK_OVERFLOW_HIDDEN);
 

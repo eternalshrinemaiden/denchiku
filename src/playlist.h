@@ -15,7 +15,7 @@ typedef struct {
 } Playlist;
 
 /* Сканирует папку «Музыка» (рекурсивно) и собственную папку данных
- * (~/.local/share/keruu/playlists), гарантируя существование «Любимых треков».
+ * (~/.local/share/denchiku/playlists), гарантируя существование «Любимых треков».
  * Возвращает GPtrArray<Playlist*> (владеет элементами). */
 GPtrArray *playlist_scan_all(void);
 
@@ -35,6 +35,9 @@ GPtrArray *playlist_resolve_tracks(const Playlist *pl, GPtrArray *library);
 
 gboolean   playlist_contains_uri(const Playlist *pl, const char *uri);
 gboolean   playlist_add_uri(const Playlist *pl, const char *uri);
+/* Добавляет URI, даже если он уже есть в плейлисте (создаёт вторую копию). */
+gboolean   playlist_add_uri_dup(const Playlist *pl, const char *uri);
+/* Удаляет URI; если запись встречается несколько раз, удаляются все копии. */
 gboolean   playlist_remove_uri(const Playlist *pl, const char *uri);
 
 /* Переименовывает плейлист: переписывает файл с новым заголовком #PLAYLIST и

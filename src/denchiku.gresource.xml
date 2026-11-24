@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
   <!-- Свои символические иконки-сердечки (в Adwaita нет контурного варианта). -->
-  <gresource prefix="/org/svyata/keruu">
-    <file>icons/keruu-heart-outline-symbolic.svg</file>
-    <file>icons/keruu-heart-filled-symbolic.svg</file>
+  <gresource prefix="/org/svyata/denchiku">
+    <file>icons/denchiku-heart-outline-symbolic.svg</file>
+    <file>icons/denchiku-heart-filled-symbolic.svg</file>
   </gresource>
 </gresources>

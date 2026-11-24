@@ -305,6 +305,19 @@ void player_restore_queue(Player *p, GPtrArray *tracks, int current_index) {
     }
 }
 
+/* Полностью очищает очередь и останавливает воспроизведение. */
+void player_clear_queue(Player *p) {
+    g_ptr_array_set_size(p->queue, 0);
+    p->queue_version++;
+    if (p->playbin) {
+        gst_element_set_state(p->playbin, GST_STATE_NULL);
+    }
+    p->current_index = -1;
+    p->is_playing = FALSE;
+    if (p->shuffle) shuffle_rebuild(p, -1);
+    notify_state_changed(p);
+}
+
 void player_add_to_queue(Player *p, Track *track, gboolean play_now) {
     if (!track) return;
     Track *copy = track_copy(track);
@@ -336,6 +349,26 @@ void player_insert_next(Player *p, Track *track) {
         p->queue_version++;
         player_play_index(p, (int)p->queue->len - 1);
     }
+}
+
+/* Вставляет копию трека сразу после него самого в очереди («дублировать»).
+ * Сравнение по указателю на объект трека — так же, как в
+ * player_remove_from_queue; если трек в очереди не найден, ничего не делаем. */
+void player_duplicate_in_queue(Player *p, Track *track) {
+    if (!track) return;
+
+    int index = -1;
+    for (guint i = 0; i < p->queue->len; i++) {
+        if (g_ptr_array_index(p->queue, i) == track) { index = (int)i; break; }
+    }
+    if (index < 0) return;
+
+    Track *copy = track_copy(track);
+    int pos = index + 1;
+    g_ptr_array_insert(p->queue, pos, copy);
+    order_on_insert(p, pos);
+    p->queue_version++;
+    notify_state_changed(p);
 }
 
 /* Удаляет элемент очереди по указателю на объект трека. Если удаляется

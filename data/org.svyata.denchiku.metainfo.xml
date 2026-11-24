@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.svyata.keruu</id>
+  <id>org.svyata.denchiku</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>keruu</name>
+  <name>Denchiku</name>
   <summary>Аудиоплеер для рабочего стола GNOME</summary>
   <description>
-    <p>keruu — аудиоплеер для рабочего стола GNOME, сфокусированный на управлении медиатекой.</p>
+    <p>Denchiku — аудиоплеер для рабочего стола GNOME, сфокусированный на управлении медиатекой.</p>
     <p>Возможности:</p>
     <ul>
       <li>Автоматическое сканирование папки «Музыка» с чтением тегов.</li>
@@ -17,14 +17,14 @@
       <li>Плеер-бар с адаптивной вёрсткой и полноэкранным плеером.</li>
     </ul>
   </description>
-  <launchable type="desktop-id">org.svyata.keruu.desktop</launchable>
+  <launchable type="desktop-id">org.svyata.denchiku.desktop</launchable>
   <developer id="org.svyata">
     <name>svyata</name>
   </developer>
-  <url type="homepage">https://github.com/the-shrine-maiden/keruu</url>
-  <url type="bugtracker">https://github.com/the-shrine-maiden/keruu/issues</url>
+  <url type="homepage">https://github.com/eternalshrinemaiden/denchiku</url>
+  <url type="bugtracker">https://github.com/eternalshrinemaiden/denchiku/issues</url>
   <provides>
-    <binary>keruu</binary>
+    <binary>denchiku</binary>
   </provides>
   <categories>
     <category>AudioVideo</category>
@@ -33,6 +33,7 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.0" date="2026-11-24"/>
     <release version="0.1.0" date="2026-11-19"/>
   </releases>
 </component>

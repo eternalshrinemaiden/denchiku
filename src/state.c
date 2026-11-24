@@ -3,7 +3,7 @@
 #include <glib/gstdio.h>
 
 static char *state_filepath(void) {
-    char *dir = g_build_filename(g_get_user_config_dir(), "keruu", NULL);
+    char *dir = g_build_filename(g_get_user_config_dir(), "denchiku", NULL);
     g_mkdir_with_parents(dir, 0755);
     char *path = g_build_filename(dir, "state.ini", NULL);
     g_free(dir);

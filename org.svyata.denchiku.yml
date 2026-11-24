@@ -1,0 +1,34 @@
+# Манифест Flatpak для denchiku.
+# Сборка: flatpak-builder --user --install --force-clean build-flatpak org.svyata.denchiku.yml
+app-id: org.svyata.denchiku
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: denchiku
+
+finish-args:
+  # Вывод звука.
+  - --socket=pulseaudio
+  # Окна: Wayland с запасным X11.
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  # Аппаратное ускорение для интерфейса GTK.
+  - --device=dri
+  # Медиатека читается из папки «Музыка». Denchiku сам теги не пишет:
+  # для правки открывается внешнее приложение (которому файловая система
+  # доступна вне этого сандбокса), поэтому запись не нужна.
+  - --filesystem=xdg-music:ro
+
+modules:
+  - name: denchiku
+    buildsystem: meson
+    sources:
+      - type: dir
+        path: .
+        skip:
+          - build
+          - build-flatpak
+          - .git
+          - .flatpak-builder
+          - .vscode

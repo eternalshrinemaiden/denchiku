@@ -28,19 +28,30 @@ void track_menu_set_open_album_cb(TrackOpenAlbumFn cb, gpointer user_data);
 typedef void (*TrackOpenArtistFn)(const char *artist, gpointer user_data);
 void track_menu_set_open_artist_cb(TrackOpenArtistFn cb, gpointer user_data);
 
+/* Обработчик пункта «Сведения». Регистрируется окном: оно открывает диалог
+ * сведений о треке (с возможностью перехода в режим редактирования тегов). */
+typedef void (*TrackShowInfoFn)(Track *track, gpointer user_data);
+void track_menu_set_show_info_cb(TrackShowInfoFn cb, gpointer user_data);
+
 /* Плейлисты. Колбэки регистрируются окном (у него есть доступ к разделу). */
 typedef gboolean   (*TrackIsFavoriteFn)(const char *uri, gpointer user_data);
 typedef void       (*TrackToggleFavoriteFn)(const char *uri, gboolean favorite,
                                             gpointer user_data);
 /* Заимствованный массив Playlist*, живущий до пересканирования. */
 typedef GPtrArray *(*TrackListPlaylistsFn)(gpointer user_data);
-typedef void       (*TrackAddToPlaylistFn)(const char *playlist_path, const char *uri,
-                                           gpointer user_data);
+/* Есть ли трек в плейлисте по пути — для галочек в подменю плейлистов. */
+typedef gboolean   (*TrackPlaylistHasFn)(const char *playlist_path, const char *uri,
+                                         gpointer user_data);
+/* Нажатие пункта плейлиста. Если трек уже в плейлисте, обработчик сам решает,
+ * что делать (например, спросить пользователя). */
+typedef void       (*TrackTogglePlaylistFn)(const char *playlist_path, const char *uri,
+                                            gpointer user_data);
 
 void track_menu_set_playlist_cbs(TrackIsFavoriteFn is_favorite,
                                  TrackToggleFavoriteFn toggle_favorite,
                                  TrackListPlaylistsFn list_playlists,
-                                 TrackAddToPlaylistFn add_to_playlist,
+                                 TrackPlaylistHasFn playlist_has,
+                                 TrackTogglePlaylistFn toggle_playlist,
                                  gpointer user_data);
 
 /* Строит всплывающее меню трека с учётом контекста. */

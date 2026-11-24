@@ -4,7 +4,7 @@
 #include <gst/gst.h>
 #include <gst/pbutils/pbutils.h>
 
-static gboolean is_audio_file(const char *filename) {
+gboolean scanner_is_audio_file(const char *filename) {
     static const char *extensions[] = {
         ".mp3", ".flac", ".ogg", ".opus", ".oga",
         ".m4a", ".m4b", ".aac", ".wav", ".aiff",
@@ -24,6 +24,23 @@ static gboolean is_audio_file(const char *filename) {
     return result;
 }
 
+/* Паспорт файла (mtime и размер) — по нему кэш решает, нужно ли перечитывать
+ * теги. Ошибка stat трактуется как «файл изменился». */
+static gboolean stat_file(const char *path, gint64 *mtime, guint64 *size) {
+    GFile *file = g_file_new_for_path(path);
+    GFileInfo *info = g_file_query_info(file,
+        G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_STANDARD_SIZE,
+        G_FILE_QUERY_INFO_NONE, NULL, NULL);
+    g_object_unref(file);
+    if (!info) return FALSE;
+
+    if (mtime) *mtime = (gint64)g_file_info_get_attribute_uint64(
+        info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
+    if (size) *size = g_file_info_get_size(info);
+    g_object_unref(info);
+    return TRUE;
+}
+
 /* Извлечение встроенной обложки из GstTagList и сохранение в кэш по имени альбома */
 static char *extract_and_cache_cover(const GstTagList *tags, const char *album_artist, const char *album) {
     if (!tags) return NULL;
@@ -32,7 +49,7 @@ static char *extract_and_cache_cover(const GstTagList *tags, const char *album_a
     char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, key, -1);
     g_free(key);
 
-    char *dir = g_build_filename(g_get_user_cache_dir(), "keruu", "covers", NULL);
+    char *dir = g_build_filename(g_get_user_cache_dir(), "denchiku", "covers", NULL);
     g_mkdir_with_parents(dir, 0755);
 
     char *filepath = g_strdup_printf("%s/%s.img", dir, hash);
@@ -208,7 +225,7 @@ static guint extract_year(const GstTagList *tags) {
 
 /* Разбирает один файл и возвращает трек (или NULL). Вызывается из нескольких
  * потоков, поэтому каждый поток использует собственный GstDiscoverer. */
-static Track *discover_track(GstDiscoverer *discoverer, const char *filepath) {
+Track *scanner_discover_file(GstDiscoverer *discoverer, const char *filepath) {
     char *uri = gst_filename_to_uri(filepath, NULL);
     if (!uri) return NULL;
 
@@ -259,6 +276,14 @@ static Track *discover_track(GstDiscoverer *discoverer, const char *filepath) {
         result = track_new(uri, title, artist, album, album_artist,
                            genre, track_number, disc_number, NULL,
                            year, cover_path, duration);
+
+        /* Паспорт файла — для инкрементального сравнения при следующем скане. */
+        gint64 mtime = 0;
+        guint64 size = 0;
+        if (stat_file(filepath, &mtime, &size)) {
+            result->mtime = mtime;
+            result->size  = size;
+        }
 
         g_free(title);
         g_free(artist);
@@ -318,7 +343,7 @@ static void collect_audio_files(const char *dir_path, GPtrArray *files) {
         if (g_file_test(full_path, G_FILE_TEST_IS_DIR)) {
             collect_audio_files(full_path, files);
             g_free(full_path);
-        } else if (is_audio_file(name)) {
+        } else if (scanner_is_audio_file(name)) {
             g_ptr_array_add(files, full_path); /* владение переходит массиву */
         } else {
             g_free(full_path);
@@ -330,9 +355,10 @@ static void collect_audio_files(const char *dir_path, GPtrArray *files) {
 #define SCAN_MAX_THREADS 8
 
 typedef struct {
-    GPtrArray *files;   /* char* (заимствованы) */
-    Track **results;    /* трек по индексу файла */
-    gint next;          /* atomic-счётчик следующего файла */
+    GPtrArray *files;          /* char* (заимствованы) */
+    Track **results;           /* трек по индексу файла */
+    const gboolean *discover;  /* TRUE — файл новый/изменённый, нужно чтение тегов */
+    gint next;                 /* atomic-счётчик следующего файла */
 } ScanWork;
 
 static gpointer scan_worker_thread(gpointer data) {
@@ -343,8 +369,9 @@ static gpointer scan_worker_thread(gpointer data) {
     for (;;) {
         gint index = g_atomic_int_add(&work->next, 1);
         if (index >= (gint)work->files->len) break;
-        work->results[index] = discover_track(discoverer,
-                                              g_ptr_array_index(work->files, index));
+        if (!work->discover[index]) continue; /* трек уже взят из кэша */
+        work->results[index] = scanner_discover_file(discoverer,
+                                                     g_ptr_array_index(work->files, index));
     }
 
     if (discoverer) gst_object_unref(discoverer);
@@ -363,7 +390,35 @@ static void scan_thread_func(GTask *task, gpointer source_object, gpointer task_
     collect_audio_files(music_dir, files);
 
     Track **results = g_new0(Track *, files->len);
-    ScanWork work = { files, results, 0 };
+    gboolean *discover = g_new0(gboolean, files->len);
+    /* URI всех файлов на диске: по нему чистим кэш от исчезнувших записей. */
+    GHashTable *present = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+    /* Быстрая сверка (mtime, size): неизменённые файлы берём из кэша и не
+     * открываем GStreamer'ом — на большой медиатеке это основной выигрыш. */
+    for (guint i = 0; i < files->len; i++) {
+        const char *path = g_ptr_array_index(files, i);
+        char *uri = g_filename_to_uri(path, NULL, NULL);
+        if (!uri) {
+            discover[i] = TRUE;
+            continue;
+        }
+        g_hash_table_add(present, uri); /* владение переходит таблице */
+
+        gint64 mtime = 0;
+        guint64 size = 0;
+        stat_file(path, &mtime, &size);
+
+        Track *cached = cache_lookup_track(uri);
+        if (cached && cached->mtime == mtime && cached->size == size) {
+            results[i] = cached; /* теги не изменились — читать заново не нужно */
+        } else {
+            track_free(cached);
+            discover[i] = TRUE;
+        }
+    }
+
+    ScanWork work = { files, results, discover, 0 };
 
     guint n_threads = g_get_num_processors();
     if (n_threads < 2) n_threads = 2;
@@ -372,7 +427,7 @@ static void scan_thread_func(GTask *task, gpointer source_object, gpointer task_
 
     GThread *threads[SCAN_MAX_THREADS] = { NULL };
     for (guint i = 0; i < n_threads; i++) {
-        threads[i] = g_thread_new("keruu-scan", scan_worker_thread, &work);
+        threads[i] = g_thread_new("denchiku-scan", scan_worker_thread, &work);
     }
     for (guint i = 0; i < n_threads; i++) {
         g_thread_join(threads[i]);
@@ -399,7 +454,7 @@ static void scan_thread_func(GTask *task, gpointer source_object, gpointer task_
     }
     for (guint i = 0; i < files->len; i++) {
         Track *t = results[i];
-        if (!t) continue;
+        if (!t || !discover[i]) continue; /* у взятых из кэша данные уже полны */
         char *key = g_strdup_printf("%s\x1f%s",
                                     t->album_artist ? t->album_artist : "",
                                     t->album ? t->album : "");
@@ -413,12 +468,19 @@ static void scan_thread_func(GTask *task, gpointer source_object, gpointer task_
 
     GPtrArray *tracks = g_ptr_array_new_with_free_func((GDestroyNotify)track_free);
     for (guint i = 0; i < files->len; i++) {
-        if (results[i]) g_ptr_array_add(tracks, results[i]);
+        if (results[i]) {
+            cache_put_track(results[i]);
+            g_ptr_array_add(tracks, results[i]);
+        }
     }
+    cache_prune_missing(present);
+
+    g_hash_table_destroy(present);
+    g_free(discover);
     g_free(results);
     g_ptr_array_unref(files);
 
-    cache_save_tracks(tracks);
+    cache_schedule_flush();
     g_task_return_pointer(task, tracks, (GDestroyNotify)g_ptr_array_unref);
 }
 

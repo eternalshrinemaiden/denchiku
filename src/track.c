@@ -69,9 +69,12 @@ Track *track_new(const char *uri, const char *title, const char *artist,
 
 Track *track_copy(const Track *t) {
     if (!t) return NULL;
-    return track_new(t->uri, t->title, t->artist, t->album, t->album_artist,
-                     t->genre, t->track_number, t->disc_number, t->disc_subtitle,
-                     t->year, t->cover_path, t->duration);
+    Track *copy = track_new(t->uri, t->title, t->artist, t->album, t->album_artist,
+                            t->genre, t->track_number, t->disc_number, t->disc_subtitle,
+                            t->year, t->cover_path, t->duration);
+    copy->mtime = t->mtime;
+    copy->size  = t->size;
+    return copy;
 }
 
 void track_free(Track *t) {

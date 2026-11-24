@@ -13,6 +13,16 @@ void album_detail_page_set_open_album_cb(AlbumOpenAlbumFn cb, gpointer user_data
 typedef void (*AlbumOpenArtistFn)(const char *artist, gpointer user_data);
 void album_detail_page_set_open_artist_cb(AlbumOpenArtistFn cb, gpointer user_data);
 
+/* Клик по жанровому чипу в шапке: переход на вкладку «Жанры» с этим жанром.
+ * Регистрируется окном. */
+typedef void (*AlbumOpenGenreFn)(const char *genre, gpointer user_data);
+void album_detail_page_set_open_genre_cb(AlbumOpenGenreFn cb, gpointer user_data);
+
+/* Кнопка-карандаш в шапке альбома: открывает все треки альбома (GPtrArray<Track*>)
+ * во внешнем редакторе тегов. Регистрируется окном. */
+typedef void (*AlbumEditTagsFn)(GPtrArray *tracks, gpointer user_data);
+void album_detail_page_set_edit_tags_cb(AlbumEditTagsFn cb, gpointer user_data);
+
 AdwNavigationPage *album_detail_page_create(Player *player,
                                             GPtrArray *all_tracks,
                                             const char *album_name,

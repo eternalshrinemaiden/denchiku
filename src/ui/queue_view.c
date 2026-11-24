@@ -14,10 +14,10 @@ static void ensure_queue_css(void) {
 
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_string(css,
-        ".keruu-queue,"
-        ".keruu-queue viewport,"
-        ".keruu-queue columnview,"
-        ".keruu-queue listview { background: none; }");
+        ".denchiku-queue,"
+        ".denchiku-queue viewport,"
+        ".denchiku-queue columnview,"
+        ".denchiku-queue listview { background: none; }");
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
                                                GTK_STYLE_PROVIDER(css),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -61,6 +61,12 @@ static void on_activate(TrackList *tl, guint position, gpointer user_data) {
     player_play_index(qv->player, (int)position);
 }
 
+static void on_clear_queue(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    QueueView *qv = user_data;
+    player_clear_queue(qv->player);
+}
+
 QueueView *queue_view_new(Player *player) {
     QueueView *qv = g_new0(QueueView, 1);
     qv->player = player;
@@ -75,13 +81,19 @@ QueueView *queue_view_new(Player *player) {
         .user_data = qv,
     };
     qv->list = track_list_new(player, &cfg);
-    gtk_widget_add_css_class(track_list_get_widget(qv->list), "keruu-queue");
+    gtk_widget_add_css_class(track_list_get_widget(qv->list), "denchiku-queue");
 
     AdwHeaderBar *hb = ADW_HEADER_BAR(adw_header_bar_new());
     adw_header_bar_set_show_start_title_buttons(hb, FALSE);
     adw_header_bar_set_title_widget(hb, GTK_WIDGET(adw_window_title_new("Очередь", NULL)));
     /* Панель стоит у правого края окна, поэтому AdwHeaderBar сам покажет
      * нативную кнопку закрытия окна в конце заголовка. */
+
+    GtkWidget *clear_btn = gtk_button_new_from_icon_name("edit-clear-all-symbolic");
+    gtk_widget_add_css_class(clear_btn, "flat");
+    gtk_widget_set_tooltip_text(clear_btn, "Очистить очередь");
+    g_signal_connect(clear_btn, "clicked", G_CALLBACK(on_clear_queue), qv);
+    adw_header_bar_pack_start(hb, clear_btn);
 
     AdwToolbarView *tv = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
     adw_toolbar_view_add_top_bar(tv, GTK_WIDGET(hb));

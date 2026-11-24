@@ -43,50 +43,117 @@ void ui_measure_min_width(GtkWidget *child, GtkOrientation orientation, int for_
     }
 }
 
-#define KERUU_TYPE_MIN_WIDTH_BIN (keruu_min_width_bin_get_type())
-G_DECLARE_FINAL_TYPE(KeruuMinWidthBin, keruu_min_width_bin, KERUU, MIN_WIDTH_BIN, GtkWidget)
+#define DENCHIKU_TYPE_MIN_WIDTH_BIN (denchiku_min_width_bin_get_type())
+G_DECLARE_FINAL_TYPE(DenchikuMinWidthBin, denchiku_min_width_bin, DENCHIKU, MIN_WIDTH_BIN, GtkWidget)
 
-struct _KeruuMinWidthBin {
+struct _DenchikuMinWidthBin {
     GtkWidget parent_instance;
     GtkWidget *child;
 };
 
-G_DEFINE_FINAL_TYPE(KeruuMinWidthBin, keruu_min_width_bin, GTK_TYPE_WIDGET)
+G_DEFINE_FINAL_TYPE(DenchikuMinWidthBin, denchiku_min_width_bin, GTK_TYPE_WIDGET)
 
-static void keruu_min_width_bin_measure(GtkWidget *widget, GtkOrientation orientation,
+static void denchiku_min_width_bin_measure(GtkWidget *widget, GtkOrientation orientation,
                                         int for_size, int *minimum, int *natural,
                                         int *minimum_baseline, int *natural_baseline) {
-    KeruuMinWidthBin *self = KERUU_MIN_WIDTH_BIN(widget);
+    DenchikuMinWidthBin *self = DENCHIKU_MIN_WIDTH_BIN(widget);
     ui_measure_min_width(self->child, orientation, for_size,
                          minimum, natural, minimum_baseline, natural_baseline);
 }
 
-static void keruu_min_width_bin_allocate(GtkWidget *widget, int width, int height, int baseline) {
-    KeruuMinWidthBin *self = KERUU_MIN_WIDTH_BIN(widget);
+static void denchiku_min_width_bin_allocate(GtkWidget *widget, int width, int height, int baseline) {
+    DenchikuMinWidthBin *self = DENCHIKU_MIN_WIDTH_BIN(widget);
     if (self->child) {
         gtk_widget_allocate(self->child, width, height, baseline, NULL);
     }
 }
 
-static void keruu_min_width_bin_dispose(GObject *object) {
-    KeruuMinWidthBin *self = KERUU_MIN_WIDTH_BIN(object);
+static void denchiku_min_width_bin_dispose(GObject *object) {
+    DenchikuMinWidthBin *self = DENCHIKU_MIN_WIDTH_BIN(object);
     g_clear_pointer(&self->child, gtk_widget_unparent);
-    G_OBJECT_CLASS(keruu_min_width_bin_parent_class)->dispose(object);
+    G_OBJECT_CLASS(denchiku_min_width_bin_parent_class)->dispose(object);
 }
 
-static void keruu_min_width_bin_class_init(KeruuMinWidthBinClass *klass) {
-    G_OBJECT_CLASS(klass)->dispose = keruu_min_width_bin_dispose;
+static void denchiku_min_width_bin_class_init(DenchikuMinWidthBinClass *klass) {
+    G_OBJECT_CLASS(klass)->dispose = denchiku_min_width_bin_dispose;
 }
 
-static void keruu_min_width_bin_init(KeruuMinWidthBin *self) {
+static void denchiku_min_width_bin_init(DenchikuMinWidthBin *self) {
     self->child = NULL;
     GtkLayoutManager *layout = gtk_custom_layout_new(NULL,
-        keruu_min_width_bin_measure, keruu_min_width_bin_allocate);
+        denchiku_min_width_bin_measure, denchiku_min_width_bin_allocate);
     gtk_widget_set_layout_manager(GTK_WIDGET(self), layout);
 }
 
 GtkWidget *ui_create_min_width_bin(GtkWidget *child) {
-    KeruuMinWidthBin *bin = g_object_new(KERUU_TYPE_MIN_WIDTH_BIN, NULL);
+    DenchikuMinWidthBin *bin = g_object_new(DENCHIKU_TYPE_MIN_WIDTH_BIN, NULL);
+    if (child) {
+        bin->child = child;
+        gtk_widget_set_parent(child, GTK_WIDGET(bin));
+    }
+    return GTK_WIDGET(bin);
+}
+
+/* ================= Контейнер фиксированного квадратного размера =================
+ * Обложка (GtkFrame + GtkPicture) наследует натуральный размер декодированной
+ * текстуры, поэтому в контейнере без жёстких размеров «квадрат» превращается в
+ * прямоугольник, а круглый аватар — в овал. Эта обёртка сообщает ровно size×size
+ * и выделяет ребёнку те же размеры. */
+#define DENCHIKU_TYPE_FIXED_SIZE_BIN (denchiku_fixed_size_bin_get_type())
+G_DECLARE_FINAL_TYPE(DenchikuFixedSizeBin, denchiku_fixed_size_bin, DENCHIKU, FIXED_SIZE_BIN, GtkWidget)
+
+struct _DenchikuFixedSizeBin {
+    GtkWidget parent_instance;
+    GtkWidget *child;
+    int size;
+};
+
+G_DEFINE_FINAL_TYPE(DenchikuFixedSizeBin, denchiku_fixed_size_bin, GTK_TYPE_WIDGET)
+
+static void denchiku_fixed_size_bin_measure(GtkWidget *widget, GtkOrientation orientation,
+                                            int for_size, int *minimum, int *natural,
+                                            int *minimum_baseline, int *natural_baseline) {
+    (void)orientation; (void)for_size;
+    DenchikuFixedSizeBin *self = DENCHIKU_FIXED_SIZE_BIN(widget);
+    if (minimum) *minimum = self->size;
+    if (natural) *natural = self->size;
+    if (minimum_baseline) *minimum_baseline = -1;
+    if (natural_baseline) *natural_baseline = -1;
+}
+
+static void denchiku_fixed_size_bin_allocate(GtkWidget *widget, int width, int height, int baseline) {
+    (void)width; (void)height;
+    DenchikuFixedSizeBin *self = DENCHIKU_FIXED_SIZE_BIN(widget);
+    if (self->child) {
+        gtk_widget_allocate(self->child, self->size, self->size, baseline, NULL);
+    }
+}
+
+static void denchiku_fixed_size_bin_dispose(GObject *object) {
+    DenchikuFixedSizeBin *self = DENCHIKU_FIXED_SIZE_BIN(object);
+    g_clear_pointer(&self->child, gtk_widget_unparent);
+    G_OBJECT_CLASS(denchiku_fixed_size_bin_parent_class)->dispose(object);
+}
+
+static void denchiku_fixed_size_bin_class_init(DenchikuFixedSizeBinClass *klass) {
+    G_OBJECT_CLASS(klass)->dispose = denchiku_fixed_size_bin_dispose;
+}
+
+static void denchiku_fixed_size_bin_init(DenchikuFixedSizeBin *self) {
+    self->child = NULL;
+    self->size = 0;
+    GtkLayoutManager *layout = gtk_custom_layout_new(NULL,
+        denchiku_fixed_size_bin_measure, denchiku_fixed_size_bin_allocate);
+    gtk_widget_set_layout_manager(GTK_WIDGET(self), layout);
+}
+
+GtkWidget *ui_create_fixed_size_bin(GtkWidget *child, int size) {
+    DenchikuFixedSizeBin *bin = g_object_new(DENCHIKU_TYPE_FIXED_SIZE_BIN, NULL);
+    bin->size = size;
+    gtk_widget_set_halign(GTK_WIDGET(bin), GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(GTK_WIDGET(bin), GTK_ALIGN_CENTER);
+    gtk_widget_set_hexpand(GTK_WIDGET(bin), FALSE);
+    gtk_widget_set_vexpand(GTK_WIDGET(bin), FALSE);
     if (child) {
         bin->child = child;
         gtk_widget_set_parent(child, GTK_WIDGET(bin));
@@ -223,6 +290,32 @@ GtkWidget *ui_create_content_header(AdwOverlaySplitView *split_view) {
     adw_header_bar_pack_start(hb, toggle_btn);
 
     return GTK_WIDGET(hb);
+}
+
+GtkWidget *ui_create_play_shuffle_group(GtkWidget **out_play_btn,
+                                        GtkWidget **out_shuffle_btn) {
+    /* Класс linked склеивает кнопки в единый блок, как у split-button: общая
+     * рамка, внешние скругления только у крайних частей. */
+    GtkWidget *group = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(group, "linked");
+    gtk_widget_set_valign(group, GTK_ALIGN_CENTER);
+
+    GtkWidget *play = gtk_button_new_from_icon_name("media-playback-start-symbolic");
+    gtk_widget_set_tooltip_text(play, "Воспроизвести");
+    gtk_widget_add_css_class(play, "suggested-action");
+    gtk_widget_set_valign(play, GTK_ALIGN_CENTER);
+
+    GtkWidget *shuffle = gtk_toggle_button_new();
+    gtk_button_set_icon_name(GTK_BUTTON(shuffle), "media-playlist-shuffle-symbolic");
+    gtk_widget_set_tooltip_text(shuffle, "Перемешать");
+    gtk_widget_set_valign(shuffle, GTK_ALIGN_CENTER);
+
+    gtk_box_append(GTK_BOX(group), play);
+    gtk_box_append(GTK_BOX(group), shuffle);
+
+    if (out_play_btn) *out_play_btn = play;
+    if (out_shuffle_btn) *out_shuffle_btn = shuffle;
+    return group;
 }
 
 /* ================= Асинхронный кэш обложек =================
@@ -439,11 +532,32 @@ static void ensure_round_cover_css(void) {
 
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_string(css,
-        ".keruu-round-cover { border-radius: 9999px; }");
+        ".denchiku-round-cover { border-radius: 9999px; }");
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
                                                GTK_STYLE_PROVIDER(css),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(css);
+}
+
+/* Adwaita задаёт frame { border-radius: 12px }, поэтому у маленьких обложек
+ * (очередь, компактный список, плеер-бар) скругление выглядит чрезмерным.
+ * Для некруглых обложек подбираем радиус пропорционально размеру (12.5%, но не
+ * меньше 4 и не больше 12 px) и регистрируем под него отдельный CSS-класс. */
+static void ensure_cover_radius_css(int radius) {
+    static GHashTable *registered = NULL;
+    if (!registered) registered = g_hash_table_new(g_direct_hash, g_direct_equal);
+    if (g_hash_table_contains(registered, GINT_TO_POINTER(radius))) return;
+    g_hash_table_add(registered, GINT_TO_POINTER(radius));
+
+    char *rule = g_strdup_printf(".denchiku-cover-r%d { border-radius: %dpx; }",
+                                 radius, radius);
+    GtkCssProvider *css = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(css, rule);
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+                                               GTK_STYLE_PROVIDER(css),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(css);
+    g_free(rule);
 }
 
 static GtkWidget *create_cover_widget(const char *cover_path, int size, gboolean round) {
@@ -456,7 +570,15 @@ static GtkWidget *create_cover_widget(const char *cover_path, int size, gboolean
     gtk_widget_set_hexpand(frame, FALSE);
     gtk_widget_set_vexpand(frame, FALSE);
     gtk_widget_set_overflow(frame, GTK_OVERFLOW_HIDDEN);
-    if (round) ui_make_cover_round(frame);
+    if (round) {
+        ui_make_cover_round(frame);
+    } else {
+        int radius = CLAMP(size / 8, 4, 12);
+        ensure_cover_radius_css(radius);
+        char cls[32];
+        g_snprintf(cls, sizeof cls, "denchiku-cover-r%d", radius);
+        gtk_widget_add_css_class(frame, cls);
+    }
 
     if (cover_exists(cover_path)) {
         GtkWidget *pic = gtk_picture_new();
@@ -498,7 +620,7 @@ GtkWidget *ui_create_cover_widget(const char *cover_path, int size) {
 void ui_make_cover_round(GtkWidget *widget) {
     if (!widget) return;
     ensure_round_cover_css();
-    gtk_widget_add_css_class(widget, "keruu-round-cover");
+    gtk_widget_add_css_class(widget, "denchiku-round-cover");
 }
 
 GtkWidget *ui_create_round_cover_widget(const char *cover_path, int size) {

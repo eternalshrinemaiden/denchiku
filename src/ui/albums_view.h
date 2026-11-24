@@ -12,4 +12,7 @@ void        albums_view_set_tracks(AlbumsView *av, GPtrArray *tracks);
 void        albums_view_refresh_playing(AlbumsView *av, const char *playing_uri);
 /* Открывает страницу альбома (используется пунктом меню «Открыть альбом»). */
 void        albums_view_open_album(AlbumsView *av, const char *album, const char *album_artist);
+/* Открывает страницу исполнителя внутри стека раздела альбомов, не переключая
+ * вкладку. */
+void        albums_view_open_artist(AlbumsView *av, const char *artist);
 void        albums_view_free(AlbumsView *av);

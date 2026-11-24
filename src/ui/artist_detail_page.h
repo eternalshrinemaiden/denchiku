@@ -25,3 +25,13 @@ AdwNavigationPage *artist_detail_page_create(Player *player,
                                              const char *artist,
                                              ArtistOpenAlbumFn on_open_album,
                                              gpointer user_data);
+
+/* Открывает страницу исполнителя в переданном стеке навигации, НЕ переключая
+ * раздел: треки исполнителя собираются из all_tracks (с учётом разбиения тегов,
+ * как в разделе «Исполнители»), а on_open_album должен открывать альбом в том же
+ * стеке. Так страницу исполнителя можно показать из любого раздела
+ * (альбомы/жанры/треки/плейлисты), не уводя пользователя во вкладку
+ * «Исполнители». */
+void artist_detail_page_open(AdwNavigationView *nav, Player *player,
+                             GPtrArray *all_tracks, const char *artist,
+                             ArtistOpenAlbumFn on_open_album, gpointer user_data);

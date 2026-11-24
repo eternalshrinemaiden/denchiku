@@ -12,6 +12,11 @@ GtkWidget *ui_create_plain_row(const char *title, const char *subtitle);
  * складывают свои минимумы, и на узком окне шторка упирается в предел. */
 GtkWidget *ui_create_min_width_bin(GtkWidget *child);
 
+/* Обёртка, жёстко задающая квадратный размер size×size: обложки (GtkFrame +
+ * GtkPicture) наследуют натуральный размер текстуры, поэтому в обычном
+ * контейнере квадрат превращается в прямоугольник, а круглый аватар — в овал. */
+GtkWidget *ui_create_fixed_size_bin(GtkWidget *child, int size);
+
 /* Общий приём «не задавать минимальную ширину»: измеряет ребёнка и обнуляет
  * минимальную ширину по горизонтали (натуральную сохраняет). Используется
  * обёртками, которые не должны раздувать минимум AdwBottomSheet. */
@@ -35,6 +40,13 @@ void       ui_clear_list_box(GtkListBox *list);
 void       ui_set_row_playing(AdwActionRow *row, gboolean is_playing);
 
 GtkWidget *ui_create_content_header(AdwOverlaySplitView *split_view);
+
+/* Связанная группа «Воспроизвести» (акцентная иконка) + «Перемешать»
+ * (переключатель): визуально единый split-button. Возвращает контейнер для
+ * шапки; указатели на обе кнопки отдаются через out-параметры (любой может быть
+ * NULL), чтобы вызывающий подключил свои обработчики. */
+GtkWidget *ui_create_play_shuffle_group(GtkWidget **out_play_btn,
+                                        GtkWidget **out_shuffle_btn);
 GtkWidget *ui_create_cover_widget(const char *cover_path, int size);
 /* То же, но с обрезкой по кругу (обложки исполнителей). */
 GtkWidget *ui_create_round_cover_widget(const char *cover_path, int size);

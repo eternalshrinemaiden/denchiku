@@ -12,6 +12,12 @@ static gpointer open_album_data;
 static AlbumOpenArtistFn open_artist_cb;
 static gpointer open_artist_data;
 
+static AlbumOpenGenreFn open_genre_cb;
+static gpointer open_genre_data;
+
+static AlbumEditTagsFn edit_tags_cb;
+static gpointer edit_tags_data;
+
 void album_detail_page_set_open_album_cb(AlbumOpenAlbumFn cb, gpointer user_data) {
     open_album_cb = cb;
     open_album_data = user_data;
@@ -22,9 +28,19 @@ void album_detail_page_set_open_artist_cb(AlbumOpenArtistFn cb, gpointer user_da
     open_artist_data = user_data;
 }
 
+void album_detail_page_set_open_genre_cb(AlbumOpenGenreFn cb, gpointer user_data) {
+    open_genre_cb = cb;
+    open_genre_data = user_data;
+}
+
+void album_detail_page_set_edit_tags_cb(AlbumEditTagsFn cb, gpointer user_data) {
+    edit_tags_cb = cb;
+    edit_tags_data = user_data;
+}
+
 /* Префикс внутренней ссылки на исполнителя: клик по такому href не открывает
  * внешний URI, а переходит на страницу исполнителя. */
-#define ARTIST_HREF_PREFIX "keruu-artist:"
+#define ARTIST_HREF_PREFIX "denchiku-artist:"
 
 static gboolean on_artist_link_activated(GtkLabel *label, const char *uri,
                                          gpointer user_data) {
@@ -89,9 +105,27 @@ struct _AlbumBackdrop {
     GtkWidget parent_instance;
     GdkRGBA color;
     gboolean has_color;
+    /* Смещение прокрутки содержимого: сдвигает градиент вверх ровно на столько,
+     * на сколько прокручен список. Так цветной фон «приклеен» к содержимому и не
+     * залипает на месте, пока страница прокручивается. */
+    double scroll_offset;
+    /* Слабая ссылка на AdwToolbarView: по ней берём высоту шапки, чтобы залить
+     * её постоянным цветом и не дать градиенту просвечивать в заголовке. */
+    GtkWidget *toolbar_view;
 };
 
 G_DEFINE_FINAL_TYPE(AlbumBackdrop, album_backdrop, GTK_TYPE_WIDGET)
+
+/* Фон страницы должен быть заметным, но не «грязным». В тёмной теме тёмный
+ * насыщенный цвет поверх тёмного читается как глубокий оттенок обложки. В
+ * светлой теме тот же цвет поверх белого даёт мыльный серый, поэтому осветляем
+ * его до пастельного тона с сохранением оттенка (HUE) и слегка приглушаем
+ * насыщенность, чтобы насыщенные обложки не давали ядовитый фон. */
+#define BACKDROP_TOP_ALPHA       0.55f
+#define BACKDROP_TOP_ALPHA_LIGHT 0.50f
+#define BACKDROP_LIGHT_VALUE     0.88f
+#define BACKDROP_LIGHT_MIN_SAT   0.30f
+#define BACKDROP_LIGHT_MAX_SAT   0.45f
 
 static void album_backdrop_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
     AlbumBackdrop *self = MC_ALBUM_BACKDROP(widget);
@@ -101,28 +135,82 @@ static void album_backdrop_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
     int height = gtk_widget_get_height(widget);
     if (width <= 0 || height <= 0) return;
 
-    graphene_rect_t bounds = GRAPHENE_RECT_INIT(0, 0, width, height);
-    graphene_point_t start = GRAPHENE_POINT_INIT(0, 0);
-    graphene_point_t end = GRAPHENE_POINT_INIT(0, height);
+    /* Тему читаем при каждой отрисовке: при смене темы GTK перерисовывает фон, и
+     * цвет подстраивается без пересоздания страницы. */
+    gboolean dark = adw_style_manager_get_dark(adw_style_manager_get_default());
 
     GdkRGBA top = self->color;
-    top.alpha = 0.55f;
-    GdkRGBA bottom = self->color;
+    if (dark) {
+        top.alpha = BACKDROP_TOP_ALPHA;
+    } else {
+        float h = 0, s = 0, v = 0;
+        gtk_rgb_to_hsv(top.red, top.green, top.blue, &h, &s, &v);
+        /* Пастель: светлое значение и умеренная насыщенность. Цветной обложке
+         * даём минимум насыщенности, чтобы оттенок читался, но ограничиваем
+         * сверху; серую обложку не «расцвечиваем» случайным HUE. */
+        if (s > 0.10f && s < BACKDROP_LIGHT_MIN_SAT) s = BACKDROP_LIGHT_MIN_SAT;
+        s = MIN(s, BACKDROP_LIGHT_MAX_SAT);
+        v = BACKDROP_LIGHT_VALUE;
+        gtk_hsv_to_rgb(h, s, v, &top.red, &top.green, &top.blue);
+        top.alpha = BACKDROP_TOP_ALPHA_LIGHT;
+    }
+
+    GdkRGBA bottom = top;
     bottom.alpha = 0.0f;
 
-    GskColorStop stops[2] = {
-        { 0.0, top },
-        { 1.0, bottom },
-    };
-    gtk_snapshot_append_linear_gradient(snapshot, &bounds, &start, &end, stops, 2);
+    /* Высота шапки: её заливаем постоянным первым цветом градиента, чтобы
+     * заголовок не менял оттенок при прокрутке. */
+    int header_h = 0;
+    if (self->toolbar_view) {
+        header_h = adw_toolbar_view_get_top_bar_height(ADW_TOOLBAR_VIEW(self->toolbar_view));
+        header_h = CLAMP(header_h, 0, height);
+    }
+
+    /* Однотонная заливка заголовка. Рисуется напрямую по фону страницы тем же
+     * цветом, что и первый стоп градиента, поэтому в покое стык не заметен. */
+    if (header_h > 0) {
+        graphene_rect_t hrect = GRAPHENE_RECT_INIT(0, 0, width, header_h);
+        gtk_snapshot_append_color(snapshot, &top, &hrect);
+    }
+
+    /* Градиент — только ниже шапки, привязанный к содержимому (сдвиг на
+     * scroll_offset). Шапку исключаем клипом, иначе градиент наложился бы на её
+     * однотонную заливку и затемнил заголовок. */
+    if (height - header_h > 0) {
+        graphene_rect_t content = GRAPHENE_RECT_INIT(0, header_h, width, height - header_h);
+        gtk_snapshot_push_clip(snapshot, &content);
+
+        graphene_rect_t bounds = GRAPHENE_RECT_INIT(0, 0, width, height);
+        graphene_point_t start = GRAPHENE_POINT_INIT(0, header_h - self->scroll_offset);
+        graphene_point_t end = GRAPHENE_POINT_INIT(0, height - self->scroll_offset);
+
+        GskColorStop stops[2] = {
+            { 0.0, top },
+            { 1.0, bottom },
+        };
+        gtk_snapshot_append_linear_gradient(snapshot, &bounds, &start, &end, stops, 2);
+        gtk_snapshot_pop(snapshot);
+    }
+}
+
+static void album_backdrop_dispose(GObject *object) {
+    AlbumBackdrop *self = MC_ALBUM_BACKDROP(object);
+    if (self->toolbar_view) {
+        g_object_remove_weak_pointer(G_OBJECT(self->toolbar_view),
+                                     (gpointer *)&self->toolbar_view);
+        self->toolbar_view = NULL;
+    }
+    G_OBJECT_CLASS(album_backdrop_parent_class)->dispose(object);
 }
 
 static void album_backdrop_class_init(AlbumBackdropClass *klass) {
     GTK_WIDGET_CLASS(klass)->snapshot = album_backdrop_snapshot;
+    G_OBJECT_CLASS(klass)->dispose = album_backdrop_dispose;
 }
 
 static void album_backdrop_init(AlbumBackdrop *self) {
     self->has_color = FALSE;
+    self->scroll_offset = 0.0;
     gtk_widget_set_hexpand(GTK_WIDGET(self), TRUE);
     gtk_widget_set_vexpand(GTK_WIDGET(self), TRUE);
 }
@@ -137,10 +225,33 @@ static void album_backdrop_set_color(AlbumBackdrop *self, const GdkRGBA *color) 
     gtk_widget_queue_draw(GTK_WIDGET(self));
 }
 
+/* Прокрутка содержимого сдвигает градиент: он остаётся привязанным к трекам, а
+ * не к окну. */
+static void on_backdrop_scroll(GtkAdjustment *adj, gpointer user_data) {
+    AlbumBackdrop *self = MC_ALBUM_BACKDROP(user_data);
+    self->scroll_offset = gtk_adjustment_get_value(adj);
+    gtk_widget_queue_draw(GTK_WIDGET(self));
+}
+
+/* Светлая тема: держим класс на странице включённым, тёмная — выключенным. Тему
+ * берём из AdwStyleManager, а не из CSS media-запроса: GTK определяет
+ * prefers-color-scheme по системной схеме, и она может не совпадать с темой
+ * приложения (тогда светлый override применялся бы и в тёмной теме). */
+static void on_style_manager_dark_changed(AdwStyleManager *sm, GParamSpec *pspec,
+                                          gpointer user_data) {
+    (void)pspec;
+    GtkWidget *page = user_data;
+    if (adw_style_manager_get_dark(sm))
+        gtk_widget_remove_css_class(page, "album-light");
+    else
+        gtk_widget_add_css_class(page, "album-light");
+}
+
 /* Заголовок страницы (шапка с кнопкой «назад» и названием) по умолчанию
  * непрозрачный и перекрывал бы фон. Делаем его (и контейнер AdwToolbarView)
- * прозрачными, чтобы градиент доходил до самого верха. */
-static void ensure_backdrop_css(void) {
+ * прозрачными, чтобы градиент доходил до самого верху. Список треков оставляем
+ * карточкой boxed-list — так строки читаются отдельно от цветного фона. */
+static void ensure_album_page_css(void) {
     static gboolean loaded = FALSE;
     if (loaded) return;
     loaded = TRUE;
@@ -153,6 +264,21 @@ static void ensure_backdrop_css(void) {
         "}"
         ".album-detail toolbarview {"
         "  background: none;"
+        "}"
+        /* В тёмной теме карточка списка полупрозрачная (@card_bg_color = 8%
+         * белого), поэтому градиент сквозь неё виден. В светлой теме
+         * @card_bg_color — плотный белый, который полностью скрывал градиент;
+         * класс album-light (вешается из кода по AdwStyleManager) делает фон
+         * карточки полупрозрачным, чтобы строки лежали на осветлённом градиенте. */
+        ".album-detail.album-light list.boxed-list {"
+        "  background-color: color-mix(in srgb, #ffffff 30%, transparent);"
+        "}"
+        ".album-genre {"
+        "  padding: 2px 10px;"
+        "  min-height: 0;"
+        "  min-width: 0;"
+        "  border-radius: 999px;"
+        "  background: color-mix(in srgb, currentColor 10%, transparent);"
         "}");
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
                                                GTK_STYLE_PROVIDER(css),
@@ -167,6 +293,7 @@ typedef struct {
     GtkWidget *year_lbl;
     GtkWidget *title_lbl;
     GtkWidget *artist_lbl;
+    GtkWidget *genre_box;
     GtkWidget *play_btn;
     gboolean is_narrow;
     guint layout_idle_id;
@@ -177,6 +304,16 @@ static void on_play_all_clicked(GtkButton *btn, gpointer user_data) {
     GPtrArray *tracks = g_object_get_data(G_OBJECT(btn), "album-tracks");
     if (tracks && tracks->len > 0) {
         player_set_queue_and_play(player, tracks, 0);
+    }
+}
+
+/* Кнопка-карандаш: правка тегов всех треков альбома. Массив треков берём из
+ * данных кнопки (тот же, что у «Воспроизвести»). */
+static void on_edit_tags_clicked(GtkButton *btn, gpointer user_data) {
+    (void)user_data;
+    GPtrArray *tracks = g_object_get_data(G_OBJECT(btn), "album-tracks");
+    if (edit_tags_cb && tracks && tracks->len > 0) {
+        edit_tags_cb(tracks, edit_tags_data);
     }
 }
 
@@ -277,6 +414,8 @@ static void apply_hero_layout(AlbumHeroLayout *hl, gboolean narrow) {
     gtk_label_set_justify(GTK_LABEL(hl->artist_lbl), justify);
     gtk_widget_set_halign(hl->artist_lbl, align);
 
+    if (hl->genre_box) gtk_widget_set_halign(hl->genre_box, align);
+
     gtk_widget_set_halign(hl->play_btn, align);
 }
 
@@ -286,24 +425,24 @@ static void apply_hero_layout(AlbumHeroLayout *hl, gboolean narrow) {
 /* Ширина окна, ниже которой шапка складывается в столбик (обложка сверху). */
 #define HERO_NARROW_WIDTH 820
 
-#define KERUU_TYPE_HERO_HOLDER (keruu_hero_holder_get_type())
-G_DECLARE_FINAL_TYPE(KeruuHeroHolder, keruu_hero_holder, KERUU, HERO_HOLDER, GtkWidget)
+#define DENCHIKU_TYPE_HERO_HOLDER (denchiku_hero_holder_get_type())
+G_DECLARE_FINAL_TYPE(DenchikuHeroHolder, denchiku_hero_holder, DENCHIKU, HERO_HOLDER, GtkWidget)
 
-struct _KeruuHeroHolder {
+struct _DenchikuHeroHolder {
     GtkWidget parent_instance;
     GtkWidget *child;
     AlbumHeroLayout *hl;
 };
 
-G_DEFINE_FINAL_TYPE(KeruuHeroHolder, keruu_hero_holder, GTK_TYPE_WIDGET)
+G_DEFINE_FINAL_TYPE(DenchikuHeroHolder, denchiku_hero_holder, GTK_TYPE_WIDGET)
 
 /* В GTK4 нет сигнала о ресайзе окна, поэтому раскладку переключаем прямо в
  * allocate — он вызывается только при реальном изменении размера, без опроса
  * кадров. */
-static void keruu_hero_holder_measure(GtkWidget *widget, GtkOrientation orientation,
+static void denchiku_hero_holder_measure(GtkWidget *widget, GtkOrientation orientation,
                                       int for_size, int *minimum, int *natural,
                                       int *minimum_baseline, int *natural_baseline) {
-    KeruuHeroHolder *self = KERUU_HERO_HOLDER(widget);
+    DenchikuHeroHolder *self = DENCHIKU_HERO_HOLDER(widget);
     if (self->child) {
         gtk_widget_measure(self->child, orientation, for_size,
                            minimum, natural, minimum_baseline, natural_baseline);
@@ -332,8 +471,8 @@ static void hero_layout_free(gpointer data) {
     g_free(hl);
 }
 
-static void keruu_hero_holder_allocate(GtkWidget *widget, int width, int height, int baseline) {
-    KeruuHeroHolder *self = KERUU_HERO_HOLDER(widget);
+static void denchiku_hero_holder_allocate(GtkWidget *widget, int width, int height, int baseline) {
+    DenchikuHeroHolder *self = DENCHIKU_HERO_HOLDER(widget);
     if (!self->child) return;
     /* Решение принимаем по ширине окна: страница альбома лежит в GtkScrolledWindow
      * с горизонтальной политикой NEVER, который выдаёт содержимому его
@@ -350,26 +489,26 @@ static void keruu_hero_holder_allocate(GtkWidget *widget, int width, int height,
     gtk_widget_allocate(self->child, width, height, baseline, NULL);
 }
 
-static void keruu_hero_holder_dispose(GObject *object) {
-    KeruuHeroHolder *self = KERUU_HERO_HOLDER(object);
+static void denchiku_hero_holder_dispose(GObject *object) {
+    DenchikuHeroHolder *self = DENCHIKU_HERO_HOLDER(object);
     g_clear_pointer(&self->child, gtk_widget_unparent);
-    G_OBJECT_CLASS(keruu_hero_holder_parent_class)->dispose(object);
+    G_OBJECT_CLASS(denchiku_hero_holder_parent_class)->dispose(object);
 }
 
-static void keruu_hero_holder_class_init(KeruuHeroHolderClass *klass) {
-    G_OBJECT_CLASS(klass)->dispose = keruu_hero_holder_dispose;
+static void denchiku_hero_holder_class_init(DenchikuHeroHolderClass *klass) {
+    G_OBJECT_CLASS(klass)->dispose = denchiku_hero_holder_dispose;
 }
 
-static void keruu_hero_holder_init(KeruuHeroHolder *self) {
+static void denchiku_hero_holder_init(DenchikuHeroHolder *self) {
     self->child = NULL;
     self->hl = NULL;
     GtkLayoutManager *layout = gtk_custom_layout_new(NULL,
-        keruu_hero_holder_measure, keruu_hero_holder_allocate);
+        denchiku_hero_holder_measure, denchiku_hero_holder_allocate);
     gtk_widget_set_layout_manager(GTK_WIDGET(self), layout);
 }
 
-static GtkWidget *keruu_hero_holder_new(AlbumHeroLayout *hl) {
-    KeruuHeroHolder *holder = g_object_new(KERUU_TYPE_HERO_HOLDER, NULL);
+static GtkWidget *denchiku_hero_holder_new(AlbumHeroLayout *hl) {
+    DenchikuHeroHolder *holder = g_object_new(DENCHIKU_TYPE_HERO_HOLDER, NULL);
     holder->hl = hl;
     holder->child = hl->hero_box;
     gtk_widget_set_parent(hl->hero_box, GTK_WIDGET(holder));
@@ -587,6 +726,60 @@ static GtkWidget *create_other_albums_section(const char *artist, GPtrArray *alb
     return section;
 }
 
+/* Собирает уникальные жанры альбома: у треков одного альбома тег может
+ * отличаться, а внутри тега жанры разделяются (см. track_split_genres), поэтому
+ * объединяем разбиение всех треков, сохраняя порядок появления. */
+static GPtrArray *collect_album_genres(GPtrArray *tracks) {
+    GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
+    GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+    for (guint i = 0; i < tracks->len; i++) {
+        Track *t = g_ptr_array_index(tracks, i);
+        char **genres = track_split_genres(t->genre);
+        if (!genres) continue;
+        for (guint j = 0; genres[j] != NULL; j++) {
+            if (g_hash_table_contains(seen, genres[j])) continue;
+            g_hash_table_add(seen, g_strdup(genres[j]));
+            g_ptr_array_add(out, g_strdup(genres[j]));
+        }
+        g_strfreev(genres);
+    }
+
+    g_hash_table_destroy(seen);
+    return out;
+}
+
+/* Клик по жанровому чипу: переходим на вкладку «Жанры» с этим жанром (колбэк
+ * зарегистрирован окном). */
+static void on_genre_chip_clicked(GtkButton *btn, gpointer user_data) {
+    (void)user_data;
+    const char *genre = g_object_get_data(G_OBJECT(btn), "genre");
+    if (open_genre_cb && genre && *genre) open_genre_cb(genre, open_genre_data);
+}
+
+/* Ряд жанровых «чипов» в шапке. AdwWrapBox переносит чипы как слова в тексте (без
+ * выравнивания по сетке), поэтому длинный список жанров не растягивает страницу.
+ * Чипы кликабельны и ведут на вкладку «Жанры». */
+static GtkWidget *create_genre_chips(GPtrArray *genres) {
+    GtkWidget *box = adw_wrap_box_new();
+    gtk_orientable_set_orientation(GTK_ORIENTABLE(box), GTK_ORIENTATION_HORIZONTAL);
+    adw_wrap_box_set_child_spacing(ADW_WRAP_BOX(box), 6);
+    adw_wrap_box_set_line_spacing(ADW_WRAP_BOX(box), 6);
+
+    for (guint i = 0; i < genres->len; i++) {
+        const char *name = g_ptr_array_index(genres, i);
+        GtkWidget *chip = gtk_button_new_with_label(name);
+        gtk_label_set_ellipsize(
+            GTK_LABEL(gtk_button_get_child(GTK_BUTTON(chip))), PANGO_ELLIPSIZE_END);
+        gtk_widget_add_css_class(chip, "caption");
+        gtk_widget_add_css_class(chip, "album-genre");
+        g_object_set_data_full(G_OBJECT(chip), "genre", g_strdup(name), g_free);
+        g_signal_connect(chip, "clicked", G_CALLBACK(on_genre_chip_clicked), NULL);
+        adw_wrap_box_append(ADW_WRAP_BOX(box), chip);
+    }
+    return box;
+}
+
 AdwNavigationPage *album_detail_page_create(Player *player,
                                             GPtrArray *all_tracks,
                                             const char *album_name,
@@ -671,6 +864,16 @@ AdwNavigationPage *album_detail_page_create(Player *player,
                            first->album_artist ? first->album_artist : "");
     }
     gtk_box_append(GTK_BOX(hl->meta_box), hl->artist_lbl);
+
+    GPtrArray *genres = collect_album_genres(filtered);
+    if (genres->len > 0) {
+        hl->genre_box = create_genre_chips(genres);
+        gtk_widget_set_margin_top(hl->genre_box, 8);
+        gtk_widget_set_halign(hl->genre_box, GTK_ALIGN_START);
+        gtk_box_append(GTK_BOX(hl->meta_box), hl->genre_box);
+    }
+    g_ptr_array_unref(genres);
+
     hl->play_btn = gtk_button_new_with_label("Воспроизвести");
     gtk_widget_set_halign(hl->play_btn, GTK_ALIGN_START);
     gtk_widget_set_margin_top(hl->play_btn, 12);
@@ -679,12 +882,33 @@ AdwNavigationPage *album_detail_page_create(Player *player,
     g_object_set_data_full(G_OBJECT(hl->play_btn), "album-tracks",
                            g_ptr_array_ref(filtered), (GDestroyNotify)g_ptr_array_unref);
     g_signal_connect(hl->play_btn, "clicked", G_CALLBACK(on_play_all_clicked), player);
-    gtk_box_append(GTK_BOX(hl->meta_box), hl->play_btn);
+
+    /* Ряд действий шапки: «Воспроизвести» + кнопка-карандаш правки тегов всех
+     * треков альбома. */
+    GtkWidget *actions_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(actions_row, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(actions_row, 12);
+    gtk_box_append(GTK_BOX(actions_row), hl->play_btn);
+
+    GtkWidget *edit_btn = gtk_button_new_from_icon_name("document-edit-symbolic");
+    gtk_widget_add_css_class(edit_btn, "pill");
+    gtk_widget_add_css_class(edit_btn, "flat");
+    gtk_widget_set_valign(edit_btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(edit_btn, "Редактировать теги альбома");
+    g_object_set_data_full(G_OBJECT(edit_btn), "album-tracks",
+                           g_ptr_array_ref(filtered), (GDestroyNotify)g_ptr_array_unref);
+    g_signal_connect(edit_btn, "clicked", G_CALLBACK(on_edit_tags_clicked), player);
+    gtk_box_append(GTK_BOX(actions_row), edit_btn);
+
+    /* Кнопка-действие шапки должна выравниваться вместе с остальными
+     * элементами meta_box при узком окне. */
+    hl->play_btn = actions_row;
+    gtk_box_append(GTK_BOX(hl->meta_box), actions_row);
     hl->cover_box = create_fixed_cover_box(first->cover_path);
     gtk_box_append(GTK_BOX(hl->hero_box), hl->meta_box);
     gtk_box_append(GTK_BOX(hl->hero_box), hl->cover_box);
     g_object_set_data_full(G_OBJECT(hl->hero_box), "hero-layout", hl, hero_layout_free);
-    gtk_box_append(GTK_BOX(vbox), keruu_hero_holder_new(hl));
+    gtk_box_append(GTK_BOX(vbox), denchiku_hero_holder_new(hl));
 /* Список треков альбома */
 GtkListBox *sub_list = GTK_LIST_BOX(gtk_list_box_new());
 gtk_widget_add_css_class(GTK_WIDGET(sub_list), "boxed-list");
@@ -744,12 +968,21 @@ adw_header_bar_set_show_start_title_buttons(hb, FALSE);
 adw_toolbar_view_add_top_bar(tv, GTK_WIDGET(hb));
 adw_toolbar_view_set_content(tv, outer_scroll);
 /* Цветной градиент из обложки кладём под всю страницу, поэтому он закрашивает и
- * область заголовка. Заголовок делаем прозрачным через CSS (см. ensure_backdrop_css). */
-GtkWidget *backdrop = album_backdrop_new();
-GdkRGBA accent;
-if (ui_cover_dominant_color(first->cover_path, &accent)) {
-    album_backdrop_set_color(MC_ALBUM_BACKDROP(backdrop), &accent);
-}
+ * область заголовка. Заголовок делаем прозрачным через CSS (см. ensure_album_page_css). */
+    GtkWidget *backdrop = album_backdrop_new();
+    GdkRGBA accent;
+    if (ui_cover_dominant_color(first->cover_path, &accent)) {
+        album_backdrop_set_color(MC_ALBUM_BACKDROP(backdrop), &accent);
+    }
+    /* Слабая ссылка на тулбар: по ней фон берёт высоту шапки, чтобы залить её
+     * постоянным цветом. */
+    MC_ALBUM_BACKDROP(backdrop)->toolbar_view = GTK_WIDGET(tv);
+    g_object_add_weak_pointer(G_OBJECT(tv),
+                              (gpointer *)&MC_ALBUM_BACKDROP(backdrop)->toolbar_view);
+    /* Градиент сдвигается вместе с содержимым: прокрутка списка треков тянет
+     * цветной фон за собой, а не оставляет его неподвижным фоном окна. */
+    g_signal_connect(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(outer_scroll)),
+                     "value-changed", G_CALLBACK(on_backdrop_scroll), backdrop);
     GtkWidget *page_overlay = gtk_overlay_new();
     gtk_overlay_set_child(GTK_OVERLAY(page_overlay), backdrop);
     gtk_widget_set_hexpand(GTK_WIDGET(tv), TRUE);
@@ -758,7 +991,16 @@ if (ui_cover_dominant_color(first->cover_path, &accent)) {
     gtk_widget_set_valign(GTK_WIDGET(tv), GTK_ALIGN_FILL);
     gtk_overlay_add_overlay(GTK_OVERLAY(page_overlay), GTK_WIDGET(tv));
     gtk_widget_add_css_class(page_overlay, "album-detail");
-    ensure_backdrop_css();
+    /* Светлый режим помечаем классом; тему берём из AdwStyleManager и следим за
+     * переключением, пока жива страница (g_signal_connect_object сам отключит
+     * обработчик при её уничтожении). */
+    AdwStyleManager *sm = adw_style_manager_get_default();
+    if (!adw_style_manager_get_dark(sm)) {
+        gtk_widget_add_css_class(page_overlay, "album-light");
+    }
+    g_signal_connect_object(sm, "notify::dark",
+                            G_CALLBACK(on_style_manager_dark_changed), page_overlay, 0);
+    ensure_album_page_css();
     AdwNavigationPage *page = adw_navigation_page_new(page_overlay, album_name);
     /* Регистрируем список треков для подсветки играющего: если страницу открыл
      * другой раздел (исполнители/жанры/треки), его обновление подсветки найдёт

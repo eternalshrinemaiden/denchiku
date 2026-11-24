@@ -9,7 +9,7 @@
  * без полной перепривязки списка (в GTK 4.12+ items-changed для того же элемента
  * не вызывает повторный bind). */
 #define TRACK_ITEM_TYPE (track_item_get_type())
-G_DECLARE_FINAL_TYPE(TrackItem, track_item, KERUU, TRACK_ITEM, GObject)
+G_DECLARE_FINAL_TYPE(TrackItem, track_item, DENCHIKU, TRACK_ITEM, GObject)
 
 struct _TrackItem {
     GObject parent_instance;
@@ -28,7 +28,7 @@ G_DEFINE_FINAL_TYPE(TrackItem, track_item, G_TYPE_OBJECT)
 
 static void track_item_set_property(GObject *obj, guint prop_id,
                                     const GValue *value, GParamSpec *pspec) {
-    TrackItem *self = KERUU_TRACK_ITEM(obj);
+    TrackItem *self = DENCHIKU_TRACK_ITEM(obj);
     switch (prop_id) {
         case ITEM_PROP_PLAYING: self->playing = g_value_get_boolean(value); break;
         default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
@@ -37,7 +37,7 @@ static void track_item_set_property(GObject *obj, guint prop_id,
 
 static void track_item_get_property(GObject *obj, guint prop_id,
                                     GValue *value, GParamSpec *pspec) {
-    TrackItem *self = KERUU_TRACK_ITEM(obj);
+    TrackItem *self = DENCHIKU_TRACK_ITEM(obj);
     switch (prop_id) {
         case ITEM_PROP_PLAYING: g_value_set_boolean(value, self->playing); break;
         default: G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop_id, pspec);
@@ -101,9 +101,9 @@ static int track_cover_size(TrackList *tl) {
  * она меняется без перепривязки ячеек. */
 static const char *zoom_class(ViewZoom z) {
     switch (z) {
-        case VIEW_ZOOM_SMALL: return "keruu-zoom-small";
-        case VIEW_ZOOM_LARGE: return "keruu-zoom-large";
-        default:              return "keruu-zoom-medium";
+        case VIEW_ZOOM_SMALL: return "denchiku-zoom-small";
+        case VIEW_ZOOM_LARGE: return "denchiku-zoom-large";
+        default:              return "denchiku-zoom-medium";
     }
 }
 
@@ -120,34 +120,34 @@ static void ensure_row_css(void) {
 
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_string(css,
-        ".keruu-playing-icon { color: @accent_color; }"
-        ".keruu-playing-title { color: @accent_color; }"
-        ".keruu-drop-above {"
+        ".denchiku-playing-icon { color: @accent_color; }"
+        ".denchiku-playing-title { color: @accent_color; }"
+        ".denchiku-drop-above {"
         "  background-image: linear-gradient(to bottom, @accent_color 3px, transparent 3px);"
         "}"
-        ".keruu-drop-below {"
+        ".denchiku-drop-below {"
         "  background-image: linear-gradient(to top, @accent_color 3px, transparent 3px);"
         "}"
-        "columnview.keruu-dragging row {"
+        "columnview.denchiku-dragging row {"
         "  box-shadow: none;"
         "  outline: none;"
         "  border-color: transparent;"
         "}"
-        "columnview.keruu-dragging row:hover,"
-        "columnview.keruu-dragging row:active {"
+        "columnview.denchiku-dragging row:hover,"
+        "columnview.denchiku-dragging row:active {"
         "  background-color: transparent;"
         "}"
-        "columnview.keruu-compact > header {"
+        "columnview.denchiku-compact > header {"
         "  min-height: 0; padding: 0; margin: 0;"
         "  border: none; background: none; box-shadow: none;"
         "}"
         /* Высота строки: базовая для очереди и по зуму для подробного списка.
          * Кнопки в суффиксе выше строки-минимума по умолчанию, поэтому задаём
          * нижнюю границу, иначе содержимое обрезается (у ячейки overflow:hidden). */
-        "columnview.keruu-tracks row { min-height: 48px; }"
-        "columnview.keruu-zoom-small row { min-height: 48px; }"
-        "columnview.keruu-zoom-medium row { min-height: 80px; }"
-        "columnview.keruu-zoom-large row { min-height: 112px; }");
+        "columnview.denchiku-tracks row { min-height: 48px; }"
+        "columnview.denchiku-zoom-small row { min-height: 48px; }"
+        "columnview.denchiku-zoom-medium row { min-height: 80px; }"
+        "columnview.denchiku-zoom-large row { min-height: 112px; }");
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
                                                GTK_STYLE_PROVIDER(css),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -188,9 +188,9 @@ static void row_set_playing(GtkWidget *title, GtkWidget *icon, gboolean playing)
     if (icon) gtk_widget_set_visible(icon, playing);
     if (title) {
         if (playing) {
-            gtk_widget_add_css_class(title, "keruu-playing-title");
+            gtk_widget_add_css_class(title, "denchiku-playing-title");
         } else {
-            gtk_widget_remove_css_class(title, "keruu-playing-title");
+            gtk_widget_remove_css_class(title, "denchiku-playing-title");
         }
     }
 }
@@ -203,7 +203,7 @@ static void on_item_playing_changed(GObject *obj, GParamSpec *pspec, gpointer us
     GtkWidget *box = user_data;
     row_set_playing(g_object_get_data(G_OBJECT(box), "title-label"),
                     g_object_get_data(G_OBJECT(box), "playing-icon"),
-                    KERUU_TRACK_ITEM(obj)->playing);
+                    DENCHIKU_TRACK_ITEM(obj)->playing);
 }
 
 static void playing_handler_unbind(GtkWidget *box) {
@@ -235,29 +235,29 @@ static char *format_duration(guint seconds) {
 
 static int cmp_title(gconstpointer a, gconstpointer b, gpointer user_data) {
     (void)user_data;
-    const Track *t1 = KERUU_TRACK_ITEM((gpointer)a)->track;
-    const Track *t2 = KERUU_TRACK_ITEM((gpointer)b)->track;
+    const Track *t1 = DENCHIKU_TRACK_ITEM((gpointer)a)->track;
+    const Track *t2 = DENCHIKU_TRACK_ITEM((gpointer)b)->track;
     return g_utf8_collate(t1->title ? t1->title : "", t2->title ? t2->title : "");
 }
 
 static int cmp_artist(gconstpointer a, gconstpointer b, gpointer user_data) {
     (void)user_data;
-    const Track *t1 = KERUU_TRACK_ITEM((gpointer)a)->track;
-    const Track *t2 = KERUU_TRACK_ITEM((gpointer)b)->track;
+    const Track *t1 = DENCHIKU_TRACK_ITEM((gpointer)a)->track;
+    const Track *t2 = DENCHIKU_TRACK_ITEM((gpointer)b)->track;
     return g_utf8_collate(t1->artist ? t1->artist : "", t2->artist ? t2->artist : "");
 }
 
 static int cmp_album(gconstpointer a, gconstpointer b, gpointer user_data) {
     (void)user_data;
-    const Track *t1 = KERUU_TRACK_ITEM((gpointer)a)->track;
-    const Track *t2 = KERUU_TRACK_ITEM((gpointer)b)->track;
+    const Track *t1 = DENCHIKU_TRACK_ITEM((gpointer)a)->track;
+    const Track *t2 = DENCHIKU_TRACK_ITEM((gpointer)b)->track;
     return g_utf8_collate(t1->album ? t1->album : "", t2->album ? t2->album : "");
 }
 
 static int cmp_year(gconstpointer a, gconstpointer b, gpointer user_data) {
     (void)user_data;
-    guint y1 = KERUU_TRACK_ITEM((gpointer)a)->track->year;
-    guint y2 = KERUU_TRACK_ITEM((gpointer)b)->track->year;
+    guint y1 = DENCHIKU_TRACK_ITEM((gpointer)a)->track->year;
+    guint y2 = DENCHIKU_TRACK_ITEM((gpointer)b)->track->year;
     if (y1 == y2) return 0;
     if (y1 == 0) return 1;  /* неизвестный год — в конец */
     if (y2 == 0) return -1;
@@ -266,8 +266,8 @@ static int cmp_year(gconstpointer a, gconstpointer b, gpointer user_data) {
 
 static int cmp_duration(gconstpointer a, gconstpointer b, gpointer user_data) {
     (void)user_data;
-    guint d1 = KERUU_TRACK_ITEM((gpointer)a)->track->duration;
-    guint d2 = KERUU_TRACK_ITEM((gpointer)b)->track->duration;
+    guint d1 = DENCHIKU_TRACK_ITEM((gpointer)a)->track->duration;
+    guint d2 = DENCHIKU_TRACK_ITEM((gpointer)b)->track->duration;
     if (d1 == d2) return 0;
     if (d1 == 0) return 1;  /* неизвестная длительность — в конец */
     if (d2 == 0) return -1;
@@ -278,8 +278,8 @@ static int cmp_duration(gconstpointer a, gconstpointer b, gpointer user_data) {
 
 static void clear_drop_indicator(TrackList *tl) {
     if (!tl->drop_row) return;
-    gtk_widget_remove_css_class(tl->drop_row, "keruu-drop-above");
-    gtk_widget_remove_css_class(tl->drop_row, "keruu-drop-below");
+    gtk_widget_remove_css_class(tl->drop_row, "denchiku-drop-above");
+    gtk_widget_remove_css_class(tl->drop_row, "denchiku-drop-below");
     tl->drop_row = NULL;
 }
 
@@ -293,7 +293,7 @@ static void set_drop_indicator(TrackList *tl, GtkWidget *row, gboolean above) {
     if (!target) return;
     tl->drop_row = target;
     tl->drop_above = above;
-    gtk_widget_add_css_class(target, above ? "keruu-drop-above" : "keruu-drop-below");
+    gtk_widget_add_css_class(target, above ? "denchiku-drop-above" : "denchiku-drop-below");
 }
 
 /* Контейнер со строками: внутри GtkColumnView это встроенный GtkListView
@@ -432,14 +432,14 @@ static GdkContentProvider *on_row_drag_prepare(GtkDragSource *source, double x,
 static void on_row_drag_begin(GtkDragSource *source, GdkDrag *drag, gpointer user_data) {
     (void)source; (void)drag;
     TrackList *tl = user_data;
-    gtk_widget_add_css_class(GTK_WIDGET(tl->view), "keruu-dragging");
+    gtk_widget_add_css_class(GTK_WIDGET(tl->view), "denchiku-dragging");
 }
 
 static void on_row_drag_end(GtkDragSource *source, GdkDrag *drag,
                             gboolean delete_data, gpointer user_data) {
     (void)source; (void)drag; (void)delete_data;
     TrackList *tl = user_data;
-    gtk_widget_remove_css_class(GTK_WIDGET(tl->view), "keruu-dragging");
+    gtk_widget_remove_css_class(GTK_WIDGET(tl->view), "denchiku-dragging");
     clear_drop_indicator(tl);
 }
 
@@ -503,6 +503,26 @@ static GtkWidget *row_widget_of(GtkWidget *child) {
     return NULL;
 }
 
+/* Триггеры меню по всей ширине строки вешаем на внутреннюю строку GtkColumnView,
+ * но она не принадлежит приложению и в момент первого bind может ещё не быть
+ * вставлена в дерево. Поэтому недостающие триггеры доставляет обработчик первого
+ * отображения содержимого строки: к этому моменту строка гарантированно в списке. */
+static void sync_row_triggers(GtkWidget *box) {
+    GtkWidget *menu_btn = g_object_get_data(G_OBJECT(box), "menu-button");
+    if (!menu_btn) return;
+
+    GtkWidget *row = row_widget_of(box);
+    if (!row || g_object_get_data(G_OBJECT(row), "denchiku-row-triggers")) return;
+
+    track_menu_add_triggers(row, menu_btn);
+    g_object_set_data(G_OBJECT(row), "denchiku-row-triggers", GINT_TO_POINTER(1));
+}
+
+static void on_row_content_mapped(GtkWidget *box, gpointer user_data) {
+    (void)user_data;
+    sync_row_triggers(box);
+}
+
 /* Кнопки лайка и меню создаём на нашем содержимом ячейки (оно привязано всегда),
  * а триггеры по всей строке добавляем отдельно и один раз — когда внутреннюю
  * строку удаётся найти. Так кнопки не пропадают, даже если строка ещё не в дереве. */
@@ -515,16 +535,18 @@ static void attach_row_menu(GtkWidget *box, GtkWidget *suffix, TrackList *tl) {
         g_object_set_data(G_OBJECT(box), "menu-button", menu_btn);
     }
 
-    GtkWidget *row = row_widget_of(box);
-    if (row && menu_btn && !g_object_get_data(G_OBJECT(row), "keruu-row-triggers")) {
-        track_menu_add_triggers(row, menu_btn);
-        g_object_set_data(G_OBJECT(row), "keruu-row-triggers", GINT_TO_POINTER(1));
+    /* Первый bind может пройти до вставки строки в дерево — тогда триггеры
+     * доставит обработчик первого отображения содержимого строки. */
+    if (!g_object_get_data(G_OBJECT(box), "denchiku-map-watch")) {
+        g_signal_connect(box, "map", G_CALLBACK(on_row_content_mapped), NULL);
+        g_object_set_data(G_OBJECT(box), "denchiku-map-watch", GINT_TO_POINTER(1));
     }
+    sync_row_triggers(box);
 }
 
 static GtkWidget *make_playing_icon(GtkWidget *box) {
     GtkWidget *icon = gtk_image_new_from_icon_name("media-playback-start-symbolic");
-    gtk_widget_add_css_class(icon, "keruu-playing-icon");
+    gtk_widget_add_css_class(icon, "denchiku-playing-icon");
     gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
     gtk_widget_set_visible(icon, FALSE);
     gtk_box_append(GTK_BOX(box), icon);
@@ -563,7 +585,7 @@ static void cover_setup(GtkListItemFactory *factory, GtkListItem *li, gpointer u
 static void cover_bind(GtkListItemFactory *factory, GtkListItem *li, gpointer user_data) {
     (void)factory;
     TrackList *tl = user_data;
-    Track *t = KERUU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
+    Track *t = DENCHIKU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
     set_cover(gtk_list_item_get_child(li), t ? t->cover_path : NULL, track_cover_size(tl));
 }
 
@@ -654,19 +676,19 @@ static void label_setup(GtkListItemFactory *factory, GtkListItem *li, gpointer u
 
 static void artist_bind(GtkListItemFactory *factory, GtkListItem *li, gpointer user_data) {
     (void)factory; (void)user_data;
-    Track *t = KERUU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
+    Track *t = DENCHIKU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
     gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(li)), t && t->artist ? t->artist : "");
 }
 
 static void album_bind(GtkListItemFactory *factory, GtkListItem *li, gpointer user_data) {
     (void)factory; (void)user_data;
-    Track *t = KERUU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
+    Track *t = DENCHIKU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
     gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(li)), t && t->album ? t->album : "");
 }
 
 static void year_bind(GtkListItemFactory *factory, GtkListItem *li, gpointer user_data) {
     (void)factory; (void)user_data;
-    Track *t = KERUU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
+    Track *t = DENCHIKU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
     char *text = (t && t->year > 0) ? g_strdup_printf("%u", t->year) : g_strdup("");
     gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(li)), text);
     g_free(text);
@@ -683,7 +705,7 @@ static void duration_setup(GtkListItemFactory *factory, GtkListItem *li, gpointe
 
 static void duration_bind(GtkListItemFactory *factory, GtkListItem *li, gpointer user_data) {
     (void)factory; (void)user_data;
-    Track *t = KERUU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
+    Track *t = DENCHIKU_TRACK_ITEM(gtk_list_item_get_item(li))->track;
     char *text = format_duration(t ? t->duration : 0);
     gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(li)), text);
     g_free(text);
@@ -813,16 +835,16 @@ static void compact_unbind(GtkListItemFactory *factory, GtkListItem *li, gpointe
 
 /* ===== активация ===== */
 
-static void on_activate(GtkColumnView *view, guint position, gpointer user_data) {
-    TrackList *tl = user_data;
-    if (tl->cfg.on_activate) {
-        tl->cfg.on_activate(tl, position, tl->cfg.user_data);
-        return;
-    }
+guint track_list_get_visible_count(TrackList *tl) {
+    GtkSelectionModel *sel = gtk_column_view_get_model(tl->view);
+    if (!sel) return 0;
+    return g_list_model_get_n_items(G_LIST_MODEL(sel));
+}
 
-    /* Без явного обработчика играем весь список в видимом (в т.ч. отсортированном)
-     * порядке, начиная с выбранного трека. */
-    GtkSelectionModel *sel = gtk_column_view_get_model(view);
+/* Играем весь список в видимом (в т.ч. отсортированном) порядке, начиная с
+ * выбранного трека. */
+void track_list_play_position(TrackList *tl, guint position) {
+    GtkSelectionModel *sel = gtk_column_view_get_model(tl->view);
     if (!sel) return;
     guint n = g_list_model_get_n_items(G_LIST_MODEL(sel));
     if (position >= n) return;
@@ -831,11 +853,21 @@ static void on_activate(GtkColumnView *view, guint position, gpointer user_data)
     for (guint i = 0; i < n; i++) {
         GObject *obj = g_list_model_get_item(G_LIST_MODEL(sel), i);
         if (!obj) continue;
-        g_ptr_array_add(tracks, KERUU_TRACK_ITEM(obj)->track);
+        g_ptr_array_add(tracks, DENCHIKU_TRACK_ITEM(obj)->track);
         g_object_unref(obj);
     }
     player_set_queue_and_play(tl->player, tracks, (int)position);
     g_ptr_array_unref(tracks);
+}
+
+static void on_activate(GtkColumnView *view, guint position, gpointer user_data) {
+    (void)view;
+    TrackList *tl = user_data;
+    if (tl->cfg.on_activate) {
+        tl->cfg.on_activate(tl, position, tl->cfg.user_data);
+        return;
+    }
+    track_list_play_position(tl, position);
 }
 
 /* ===== публичный интерфейс ===== */
@@ -919,9 +951,9 @@ void track_list_refresh(TrackList *tl) {
     ViewZoom zoom = view_controls_get_zoom(tl->cfg.controls);
     if (zoom != tl->last_zoom) {
         tl->last_zoom = zoom;
-        gtk_widget_remove_css_class(GTK_WIDGET(tl->view), "keruu-zoom-small");
-        gtk_widget_remove_css_class(GTK_WIDGET(tl->view), "keruu-zoom-medium");
-        gtk_widget_remove_css_class(GTK_WIDGET(tl->view), "keruu-zoom-large");
+        gtk_widget_remove_css_class(GTK_WIDGET(tl->view), "denchiku-zoom-small");
+        gtk_widget_remove_css_class(GTK_WIDGET(tl->view), "denchiku-zoom-medium");
+        gtk_widget_remove_css_class(GTK_WIDGET(tl->view), "denchiku-zoom-large");
         gtk_widget_add_css_class(GTK_WIDGET(tl->view), zoom_class(zoom));
         cover_column_rebuild(tl);
     }
@@ -931,8 +963,8 @@ void track_list_refresh(TrackList *tl) {
 
 static void build_compact(TrackList *tl) {
     gtk_widget_add_css_class(GTK_WIDGET(tl->view), "rich-list");
-    gtk_widget_add_css_class(GTK_WIDGET(tl->view), "keruu-compact");
-    gtk_widget_add_css_class(GTK_WIDGET(tl->view), "keruu-tracks");
+    gtk_widget_add_css_class(GTK_WIDGET(tl->view), "denchiku-compact");
+    gtk_widget_add_css_class(GTK_WIDGET(tl->view), "denchiku-tracks");
 
     GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
     g_signal_connect(factory, "setup", G_CALLBACK(compact_setup), tl);
@@ -952,7 +984,7 @@ static void build_compact(TrackList *tl) {
 
 static void build_detailed(TrackList *tl) {
     gtk_widget_add_css_class(GTK_WIDGET(tl->view), "data-table");
-    gtk_widget_add_css_class(GTK_WIDGET(tl->view), "keruu-tracks");
+    gtk_widget_add_css_class(GTK_WIDGET(tl->view), "denchiku-tracks");
     gtk_widget_add_css_class(GTK_WIDGET(tl->view), zoom_class(tl->last_zoom));
 
     /* Обложка — отдельный безымянный несортируемый столбец фиксированной ширины

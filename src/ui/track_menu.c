@@ -13,6 +13,9 @@ static gpointer open_album_data;
 static TrackOpenArtistFn open_artist_cb;
 static gpointer open_artist_data;
 
+static TrackShowInfoFn show_info_cb;
+static gpointer show_info_data;
+
 void track_menu_set_open_album_cb(TrackOpenAlbumFn cb, gpointer user_data) {
     open_album_cb = cb;
     open_album_data = user_data;
@@ -23,12 +26,18 @@ void track_menu_set_open_artist_cb(TrackOpenArtistFn cb, gpointer user_data) {
     open_artist_data = user_data;
 }
 
+void track_menu_set_show_info_cb(TrackShowInfoFn cb, gpointer user_data) {
+    show_info_cb = cb;
+    show_info_data = user_data;
+}
+
 /* Колбэки работы с плейлистами и реестр кнопок-«сердечек»: состояние кнопок
  * должно синхронно обновляться во всех списках и плеер-баре. */
 static TrackIsFavoriteFn     playlist_is_favorite_cb;
 static TrackToggleFavoriteFn playlist_toggle_favorite_cb;
 static TrackListPlaylistsFn  playlist_list_cb;
-static TrackAddToPlaylistFn  playlist_add_cb;
+static TrackPlaylistHasFn    playlist_has_cb;
+static TrackTogglePlaylistFn playlist_toggle_cb;
 static gpointer              playlist_cb_data;
 
 static GPtrArray *favorite_buttons; /* GtkWidget* (weak, без владения) */
@@ -36,12 +45,14 @@ static GPtrArray *favorite_buttons; /* GtkWidget* (weak, без владения
 void track_menu_set_playlist_cbs(TrackIsFavoriteFn is_favorite,
                                  TrackToggleFavoriteFn toggle_favorite,
                                  TrackListPlaylistsFn list_playlists,
-                                 TrackAddToPlaylistFn add_to_playlist,
+                                 TrackPlaylistHasFn playlist_has,
+                                 TrackTogglePlaylistFn toggle_playlist,
                                  gpointer user_data) {
     playlist_is_favorite_cb = is_favorite;
     playlist_toggle_favorite_cb = toggle_favorite;
     playlist_list_cb = list_playlists;
-    playlist_add_cb = add_to_playlist;
+    playlist_has_cb = playlist_has;
+    playlist_toggle_cb = toggle_playlist;
     playlist_cb_data = user_data;
 }
 
@@ -53,7 +64,7 @@ static void ensure_favorite_css(void) {
     GtkCssProvider *css = gtk_css_provider_new();
     /* Закрашенное сердечко (трек в «Любимых») — красное. */
     gtk_css_provider_load_from_string(css,
-        ".keruu-favorite, .keruu-favorite image {"
+        ".denchiku-favorite, .denchiku-favorite image {"
         "  color: #e01b24;"
         "}");
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
@@ -73,11 +84,11 @@ static void update_favorite_button(GtkWidget *btn) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), favorite);
     /* Закрашенное красное сердечко для «Любимых», контурное — для остальных. */
     gtk_button_set_icon_name(GTK_BUTTON(btn),
-        favorite ? "keruu-heart-filled-symbolic" : "keruu-heart-outline-symbolic");
+        favorite ? "denchiku-heart-filled-symbolic" : "denchiku-heart-outline-symbolic");
     if (favorite) {
-        gtk_widget_add_css_class(btn, "keruu-favorite");
+        gtk_widget_add_css_class(btn, "denchiku-favorite");
     } else {
-        gtk_widget_remove_css_class(btn, "keruu-favorite");
+        gtk_widget_remove_css_class(btn, "denchiku-favorite");
     }
     gtk_widget_set_tooltip_text(btn, favorite ? "Убрать из любимых"
                                                : "Добавить в любимые");
@@ -111,7 +122,7 @@ GtkWidget *track_favorite_button_new(const char *uri) {
     ensure_favorite_css();
 
     GtkWidget *btn = gtk_toggle_button_new();
-    gtk_button_set_icon_name(GTK_BUTTON(btn), "keruu-heart-outline-symbolic");
+    gtk_button_set_icon_name(GTK_BUTTON(btn), "denchiku-heart-outline-symbolic");
     gtk_widget_add_css_class(btn, "flat");
     gtk_widget_set_valign(btn, GTK_ALIGN_CENTER);
     gtk_widget_set_tooltip_text(btn, "Добавить в любимые");
@@ -203,6 +214,15 @@ static void on_go_to_artist(GSimpleAction *action, GVariant *param, gpointer use
     }
 }
 
+static void on_show_info(GSimpleAction *action, GVariant *param, gpointer user_data) {
+    (void)action;
+    (void)param;
+    TrackMenuActions *a = user_data;
+    if (show_info_cb && a->track) {
+        show_info_cb(a->track, show_info_data);
+    }
+}
+
 static void on_favorite_change_state(GSimpleAction *action, GVariant *value,
                                      gpointer user_data) {
     TrackMenuActions *a = user_data;
@@ -218,13 +238,37 @@ static void on_favorite_change_state(GSimpleAction *action, GVariant *value,
     g_object_unref(action);
 }
 
-static void on_add_to_playlist(GSimpleAction *action, GVariant *param,
-                               gpointer user_data) {
+static void on_duplicate(GSimpleAction *action, GVariant *param, gpointer user_data) {
     (void)action;
+    (void)param;
     TrackMenuActions *a = user_data;
-    const char *path = g_variant_get_string(param, NULL);
-    if (a->track && path && playlist_add_cb) {
-        playlist_add_cb(path, a->track->uri, playlist_cb_data);
+    player_duplicate_in_queue(a->player, a->track);
+}
+
+/* Контекст пункта плейлиста: к какому треку и плейлисту относится нажатие.
+ * Хранится в данных действия и освобождается вместе с ним. */
+typedef struct {
+    TrackMenuActions *actions;
+    char *playlist_path;
+} PlaylistItemCtx;
+
+static void playlist_item_ctx_free(gpointer data) {
+    PlaylistItemCtx *ctx = data;
+    g_free(ctx->playlist_path);
+    g_free(ctx);
+}
+
+/* Пункт плейлиста — состоятельное действие: галочка слева показывает, есть ли
+ * трек в плейлисте. Смена состояния означает либо добавление (трека не было),
+ * либо нажатие на уже отмеченный пункт; что именно делать, решает обработчик. */
+static void on_toggle_playlist(GSimpleAction *action, GVariant *value,
+                               gpointer user_data) {
+    (void)value;
+    (void)user_data;
+    PlaylistItemCtx *ctx = g_object_get_data(G_OBJECT(action), "playlist-item-ctx");
+    if (ctx && ctx->actions->track && ctx->playlist_path && playlist_toggle_cb) {
+        playlist_toggle_cb(ctx->playlist_path, ctx->actions->track->uri,
+                           playlist_cb_data);
     }
 }
 
@@ -264,7 +308,46 @@ static GPtrArray *collect_artists(const Track *track) {
     return out;
 }
 
+/* Максимальная длина названия плейлиста в подменю «Добавить в плейлисты».
+ * Пункты GMenu не умеют усекаться многоточием, поэтому длинные названия
+ * растягивают popover по ширине — обрезаем подпись заранее. */
+#define PLAYLIST_MENU_NAME_MAX 30
+
+/* Обрезает UTF-8-название до max_chars символов, добавляя многоточие при
+ * превышении. Возвращает новую строку (освобождать g_free). Обрезка по
+ * символам, а не байтам, чтобы не порвать многобайтные буквы. */
+static char *truncate_menu_name(const char *name, guint max_chars) {
+    if (!name) return g_strdup("");
+    if (g_utf8_strlen(name, -1) <= max_chars) return g_strdup(name);
+
+    const char *end = g_utf8_offset_to_pointer(name, max_chars);
+    char *head = g_strndup(name, end - name);
+    char *out = g_strconcat(head, "…", NULL);
+    g_free(head);
+    return out;
+}
+
 GtkWidget *track_menu_popover_new(Track *track, TrackContext context, Player *player) {
+    /* Состояние действий нужно уже при построении меню (пункты плейлистов
+     * ссылаются на него), поэтому создаём его до модели. Владеет им popover —
+     * освобождается вместе с меню. */
+    TrackMenuActions *actions = g_new0(TrackMenuActions, 1);
+    actions->track = track;
+    actions->player = player;
+
+    GSimpleActionGroup *group = g_simple_action_group_new();
+    const GActionEntry entries[] = {
+        { "play-next",         on_play_next,         NULL, NULL, NULL, {0} },
+        { "append",            on_append,            NULL, NULL, NULL, {0} },
+        { "duplicate",         on_duplicate,         NULL, NULL, NULL, {0} },
+        { "remove-from-queue", on_remove_from_queue, NULL, NULL, NULL, {0} },
+        { "open-album",        on_open_album,        NULL, NULL, NULL, {0} },
+        { "go-to-artist",      on_go_to_artist,      "s",  NULL, NULL, {0} },
+        { "show-info",         on_show_info,         NULL, NULL, NULL, {0} },
+    };
+    g_action_map_add_action_entries(G_ACTION_MAP(group), entries,
+                                    G_N_ELEMENTS(entries), actions);
+
     GMenu *menu = g_menu_new();
 
     /* Удаление доступно только для элементов очереди и стоит в самом верху. */
@@ -310,9 +393,15 @@ GtkWidget *track_menu_popover_new(Track *track, TrackContext context, Player *pl
     }
     g_object_unref(nav);
 
+    /* В очереди «играть далее» и «добавить в очередь» бессмысленны: вместо них
+     * трек можно продублировать сразу за собой. */
     GMenu *playback = g_menu_new();
-    g_menu_append(playback, "Играть далее", "track.play-next");
-    g_menu_append(playback, "Добавить в очередь", "track.append");
+    if (context == TRACK_CONTEXT_QUEUE) {
+        g_menu_append(playback, "Дублировать", "track.duplicate");
+    } else {
+        g_menu_append(playback, "Играть далее", "track.play-next");
+        g_menu_append(playback, "Добавить в очередь", "track.append");
+    }
     g_menu_append_section(menu, NULL, G_MENU_MODEL(playback));
     g_object_unref(playback);
 
@@ -325,42 +414,64 @@ GtkWidget *track_menu_popover_new(Track *track, TrackContext context, Player *pl
     g_menu_append(lists, "Добавить в любимые", "track.favorite");
 
     GPtrArray *playlists = playlist_list_cb ? playlist_list_cb(playlist_cb_data) : NULL;
-    if (playlists && playlists->len > 0) {
-        GMenu *submenu = g_menu_new();
+    GMenu *submenu = g_menu_new();
+    guint playlist_items = 0;
+    if (playlists && track->uri) {
         for (guint i = 0; i < playlists->len; i++) {
             Playlist *pl = g_ptr_array_index(playlists, i);
-            GMenuItem *item = g_menu_item_new(pl->name, NULL);
-            g_menu_item_set_action_and_target(item, "track.add-to-playlist",
-                                              "s", pl->path);
+            /* «Любимые треки» здесь не показываем: за них отвечает отдельный
+             * пункт «Добавить в любимые». */
+            if (pl->favorite) continue;
+
+            gboolean has = playlist_has_cb
+                ? playlist_has_cb(pl->path, track->uri, playlist_cb_data)
+                : FALSE;
+
+            /* У каждого плейлиста своё состояние (галочка), поэтому и своё
+             * действие: состояние хранится в действии, а не в модели меню. */
+            char *action_name = g_strdup_printf("toggle-playlist-%u", i);
+            GSimpleAction *act = g_simple_action_new_stateful(
+                action_name, NULL, g_variant_new_boolean(has));
+
+            PlaylistItemCtx *ctx = g_new0(PlaylistItemCtx, 1);
+            ctx->actions = actions;
+            ctx->playlist_path = g_strdup(pl->path);
+            g_object_set_data_full(G_OBJECT(act), "playlist-item-ctx", ctx,
+                                   playlist_item_ctx_free);
+            g_signal_connect(act, "change-state",
+                             G_CALLBACK(on_toggle_playlist), NULL);
+            g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(act));
+            g_object_unref(act);
+
+            char *label = truncate_menu_name(pl->name, PLAYLIST_MENU_NAME_MAX);
+            char *detailed = g_strdup_printf("track.%s", action_name);
+            GMenuItem *item = g_menu_item_new(label, detailed);
+            g_free(detailed);
+            g_free(label);
+            g_free(action_name);
             g_menu_append_item(submenu, item);
             g_object_unref(item);
+            playlist_items++;
         }
-        g_menu_append_submenu(lists, "Добавить в плейлисты", G_MENU_MODEL(submenu));
-        g_object_unref(submenu);
     }
+    if (playlist_items > 0) {
+        g_menu_append_submenu(lists, "Добавить в плейлисты", G_MENU_MODEL(submenu));
+    }
+    g_object_unref(submenu);
+
     g_menu_append_section(menu, NULL, G_MENU_MODEL(lists));
     g_object_unref(lists);
+
+    /* Сведения о треке — отдельной секцией в самом низу. */
+    GMenu *info = g_menu_new();
+    g_menu_append(info, "Сведения", "track.show-info");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(info));
+    g_object_unref(info);
 
     GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
     g_object_unref(menu);
 
-    /* Действия живут ровно столько же, сколько меню. */
-    TrackMenuActions *actions = g_new0(TrackMenuActions, 1);
-    actions->track = track;
-    actions->player = player;
     g_object_set_data_full(G_OBJECT(popover), "track-menu-actions", actions, g_free);
-
-    const GActionEntry entries[] = {
-        { "play-next",         on_play_next,         NULL, NULL, NULL, {0} },
-        { "append",            on_append,            NULL, NULL, NULL, {0} },
-        { "remove-from-queue", on_remove_from_queue, NULL, NULL, NULL, {0} },
-        { "open-album",        on_open_album,        NULL, NULL, NULL, {0} },
-        { "go-to-artist",      on_go_to_artist,      "s",  NULL, NULL, {0} },
-        { "add-to-playlist",   on_add_to_playlist,   "s",  NULL, NULL, {0} },
-    };
-    GSimpleActionGroup *group = g_simple_action_group_new();
-    g_action_map_add_action_entries(G_ACTION_MAP(group), entries,
-                                    G_N_ELEMENTS(entries), actions);
 
     /* Состоятельное действие — в меню отображается галочкой. */
     GSimpleAction *favorite_action = g_simple_action_new_stateful(

@@ -14,6 +14,10 @@ typedef struct {
     guint year;
     char *cover_path;
     guint duration; /* длительность трека в секундах (0 — неизвестна) */
+    /* Паспорт файла на диске: нужен кэшу и инкрементальному обновлению, чтобы
+     * перечитывать теги только у новых или изменённых файлов. */
+    gint64  mtime;  /* время последней модификации, секунды эпохи (0 — неизвестно) */
+    guint64 size;   /* размер файла в байтах */
 } Track;
 
 Track *track_new(const char *uri, const char *title, const char *artist,

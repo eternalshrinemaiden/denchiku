@@ -13,14 +13,18 @@ void         library_view_set_tracks(LibraryView *lv, GPtrArray *tracks);
 void         library_view_regroup_artists(LibraryView *lv, GPtrArray *tracks);
 /* Перестраивает только группировку по жанрам. */
 void         library_view_regroup_genres(LibraryView *lv, GPtrArray *tracks);
+/* Делает жанр активным фильтром на вкладке «Жанры» (раздел переключается окном). */
+void         library_view_select_genre(LibraryView *lv, const char *genre);
 void         library_view_refresh_playing(LibraryView *lv);
 /* Открывает страницу альбома (пункт меню «Открыть альбом») в заданном разделе,
  * чтобы не переключать вкладку: section — имя видимого раздела content_stack. */
 void         library_view_open_album(LibraryView *lv, const char *section,
                                       const char *album, const char *album_artist);
-/* Открывает страницу исполнителя (пункт меню «Перейти к исполнителю»); окно
- * перед этим переключает раздел на «Исполнители». */
-void         library_view_open_artist(LibraryView *lv, const char *artist);
+/* Открывает страницу исполнителя (пункт меню «Перейти к исполнителю» и ссылка в
+ * шапке альбома) в заданном разделе, не переключая вкладку: section — имя
+ * видимого раздела content_stack. */
+void         library_view_open_artist(LibraryView *lv, const char *section,
+                                      const char *artist);
 /* Элементы управления видом браузера альбомов (размер элементов, сортировка). */
 ViewControls *library_view_get_view_controls(LibraryView *lv);
 void         library_view_free(LibraryView *lv);

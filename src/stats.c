@@ -8,7 +8,7 @@ static GHashTable *plays;
 /* Файл статистики: строки вида "<count>\t<uri>". Свой простой формат (а не
  * GKeyFile), потому что URI может содержать символы, недопустимые в ключах. */
 static char *stats_filepath(void) {
-    char *dir = g_build_filename(g_get_user_config_dir(), "keruu", NULL);
+    char *dir = g_build_filename(g_get_user_config_dir(), "denchiku", NULL);
     g_mkdir_with_parents(dir, 0755);
     char *path = g_build_filename(dir, "plays.tsv", NULL);
     g_free(dir);

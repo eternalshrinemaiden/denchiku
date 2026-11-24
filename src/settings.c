@@ -8,6 +8,9 @@ static gboolean g_initialized = FALSE;
 static GRegex *g_regex_artists = NULL;
 static GRegex *g_regex_genres  = NULL;
 
+/* Выбранный внешний редактор тегов (идентификатор .desktop или путь). */
+static char *g_tag_editor = NULL;
+
 static const char *ARTISTS_SEPARATORS[] = {
     ",", ";", "&", "feat", "ft", "featuring", "vs", "versus", NULL
 };
@@ -16,7 +19,7 @@ static const char *GENRES_SEPARATORS[] = {
 };
 
 static char *settings_filepath(void) {
-    char *dir = g_build_filename(g_get_user_config_dir(), "keruu", NULL);
+    char *dir = g_build_filename(g_get_user_config_dir(), "denchiku", NULL);
     g_mkdir_with_parents(dir, 0755);
     char *path = g_build_filename(dir, "settings.ini", NULL);
     g_free(dir);
@@ -36,6 +39,8 @@ static void set_defaults(void) {
     g_settings.genres.enabled    = TRUE;
     g_settings.genres.separators = g_ptr_array_new_with_free_func(g_free);
     set_default_separators(&g_settings.genres, GENRES_SEPARATORS);
+
+    if (!g_tag_editor) g_tag_editor = g_strdup("");
 }
 
 static TagSplitCategory *category_for(gboolean artists) {
@@ -140,6 +145,10 @@ void settings_load(void) {
             g_settings.genres.enabled = g_key_file_get_boolean(kf, "tag_split", "genres_enabled", NULL);
         load_separators(kf, "artists_separators", &g_settings.artists);
         load_separators(kf, "genres_separators", &g_settings.genres);
+
+        char *editor = g_key_file_get_string(kf, "tag_editor", "app", NULL);
+        g_free(g_tag_editor);
+        g_tag_editor = editor ? editor : g_strdup("");
     }
     g_key_file_free(kf);
     g_free(path);
@@ -164,6 +173,7 @@ void settings_save(void) {
     g_key_file_set_boolean(kf, "tag_split", "genres_enabled", g_settings.genres.enabled);
     save_separators(kf, "artists_separators", &g_settings.artists);
     save_separators(kf, "genres_separators", &g_settings.genres);
+    g_key_file_set_string(kf, "tag_editor", "app", g_tag_editor ? g_tag_editor : "");
 
     char *path = settings_filepath();
     g_key_file_save_to_file(kf, path, NULL);
@@ -203,4 +213,16 @@ void tag_split_remove_separator(gboolean artists, const char *separator) {
             return;
         }
     }
+}
+
+const char *settings_tag_editor(void) {
+    if (!g_initialized) settings_load();
+    return g_tag_editor ? g_tag_editor : "";
+}
+
+void settings_set_tag_editor(const char *editor) {
+    if (!g_initialized) settings_load();
+    g_free(g_tag_editor);
+    g_tag_editor = g_strdup(editor ? editor : "");
+    settings_save();
 }
