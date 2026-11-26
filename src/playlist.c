@@ -228,7 +228,7 @@ static Track *track_from_uri(const char *uri) {
 }
 
 GPtrArray *playlist_resolve_tracks(const Playlist *pl, GPtrArray *library) {
-    GPtrArray *result = g_ptr_array_new_with_free_func((GDestroyNotify)track_free);
+    GPtrArray *result = g_ptr_array_new_with_free_func((GDestroyNotify)track_unref);
     if (!pl) return result;
 
     GHashTable *by_uri = g_hash_table_new(g_str_hash, g_str_equal);
@@ -243,7 +243,7 @@ GPtrArray *playlist_resolve_tracks(const Playlist *pl, GPtrArray *library) {
     for (guint i = 0; i < uris->len; i++) {
         const char *uri = g_ptr_array_index(uris, i);
         Track *found = g_hash_table_lookup(by_uri, uri);
-        g_ptr_array_add(result, found ? track_copy(found) : track_from_uri(uri));
+        g_ptr_array_add(result, found ? track_ref(found) : track_from_uri(uri));
     }
 
     g_ptr_array_unref(uris);

@@ -2,6 +2,11 @@
 #include <glib.h>
 
 typedef struct {
+    /* Счётчик ссылок: один и тот же трек разделяется между кэшем медиатеки,
+     * списками UI, очередью плеера и плейлистами, чтобы не держать несколько
+     * полных копий метаданных. Атомарный — объекты создаются и удерживаются в
+     * разных потоках (сканер, watcher). */
+    gint refcount;
     char *uri;
     char *title;
     char *artist;
@@ -24,10 +29,13 @@ Track *track_new(const char *uri, const char *title, const char *artist,
                  const char *album, const char *album_artist, const char *genre,
                  guint track_number, guint disc_number, const char *disc_subtitle,
                  guint year, const char *cover_path, guint duration);
-/* Полная копия трека: элементы очереди хранят собственные копии, потому что
- * объекты медиатеки разделяются между несколькими списками одновременно. */
+/* Новая независимая копия трека (счётчик ссылок = 1). Нужна редко: обычно
+ * достаточно track_ref() на существующий объект. */
 Track *track_copy(const Track *track);
-void   track_free(Track *track);
+/* Увеличивает счётчик ссылок и возвращает тот же указатель (для chaining). */
+Track *track_ref(Track *track);
+/* Уменьшает счётчик ссылок; освобождает трек, когда ссылок не осталось. */
+void   track_unref(Track *track);
 
 /* Разбивает тег исполнителя (artist или album_artist) на отдельных
  * исполнителей по разделителям: запятая, точка с запятой, « & », а также

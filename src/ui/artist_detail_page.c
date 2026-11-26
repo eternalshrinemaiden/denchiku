@@ -70,7 +70,7 @@ static void on_single_card_clicked(GtkButton *btn, gpointer user_data) {
     Track *t = g_object_get_data(G_OBJECT(btn), "track");
     Player *player = g_object_get_data(G_OBJECT(btn), "player");
     if (!t || !player) return;
-    GPtrArray *one = g_ptr_array_new(); /* player копирует треки */
+    GPtrArray *one = g_ptr_array_new(); /* player берёт ссылки на треки */
     g_ptr_array_add(one, t);
     player_set_queue_and_play(player, one, 0);
     g_ptr_array_unref(one);

@@ -413,7 +413,7 @@ static void scan_thread_func(GTask *task, gpointer source_object, gpointer task_
         if (cached && cached->mtime == mtime && cached->size == size) {
             results[i] = cached; /* теги не изменились — читать заново не нужно */
         } else {
-            track_free(cached);
+            track_unref(cached);
             discover[i] = TRUE;
         }
     }
@@ -466,7 +466,7 @@ static void scan_thread_func(GTask *task, gpointer source_object, gpointer task_
     }
     g_hash_table_destroy(album_max_disc);
 
-    GPtrArray *tracks = g_ptr_array_new_with_free_func((GDestroyNotify)track_free);
+    GPtrArray *tracks = g_ptr_array_new_with_free_func((GDestroyNotify)track_unref);
     for (guint i = 0; i < files->len; i++) {
         if (results[i]) {
             cache_put_track(results[i]);

@@ -2,8 +2,9 @@
 #include "track.h"
 #include <gio/gio.h>
 
-/* Медиатека в кэше называется группой на трек: [track:<uri>]. Так добавление,
- * удаление и переименование записи не требует перебора всего INI-файла. */
+/* Медиатека в памяти — таблица uri -> Track*. Раньше весь список держался ещё
+ * и в GKeyFile постоянно, что дублировало метаданные в тяжёлом формате GLib;
+ * теперь GKeyFile собирается только транзиентно при загрузке и записи. */
 #define CACHE_FLUSH_DELAY_MS 1500
 
 static char *get_cache_filepath(void) {
@@ -16,91 +17,98 @@ static char *get_cache_filepath(void) {
 
 /* ===== общее in-memory-хранилище ===== */
 
-static GMutex    g_lock;
-static GKeyFile *g_kf;
-static gboolean  g_loaded;
-static gboolean  g_dirty;
-static guint     g_flush_id; /* id источника отложенной записи (0 — нет) */
+static GMutex      g_lock;
+static GHashTable *g_tracks;   /* char* uri -> Track* (кэш владеет ссылкой) */
+static gboolean    g_loaded;
+static gboolean    g_dirty;
+static guint       g_flush_id; /* id источника отложенной записи (0 — нет) */
 
 static void schedule_flush_locked(void);
 
-static char *group_for_uri(const char *uri) {
-    return g_strdup_printf("track:%s", uri);
-}
-
-/* Кэш прежних версий хранил треки как [track_N] с ключом uri. Приводим такие
- * записи к канонической группе [track:<uri>]: иначе одна и та же песня окажется
- * в кэше дважды — старой группой и новой с тем же uri (и в UI задвоится). */
-static void normalize_legacy_locked(void) {
-    gsize n = 0;
-    char **groups = g_key_file_get_groups(g_kf, &n);
-    gboolean changed = FALSE;
-
-    for (gsize i = 0; i < n; i++) {
-        char *uri = g_key_file_get_string(g_kf, groups[i], "uri", NULL);
-        if (!uri || !*uri) {
-            g_free(uri);
+/* ===== сериализация =====
+ * На диск пишем INI-текст напрямую из таблицы (без промежуточного GKeyFile):
+ * формат совместим с прежним, а лишняя полная копия структуры на каждый flush
+ * не создаётся. Чтение всё равно идёт через GKeyFile — он устойчиво разбирает
+ * экранирование. Значения экранируем совместимо с g_key_file_to_data(): \\,
+ * \n, \r, \t, а ведущие пробелы — \s (см. ini_append_escaped). */
+static void ini_append_escaped(GString *out, const char *s) {
+    /* Ведущие пробелы/табы парсер GKeyFile срезает, поэтому их экономно
+     * экранируем (\s, \t), чтобы значение сохранилось; пробелы в остальной
+     * части остаются как есть. \n, \r, \t и \\ экранируются всегда. */
+    gboolean leading = TRUE;
+    for (const char *p = s; *p; p++) {
+        char c = *p;
+        if (leading && (c == ' ' || c == '\t')) {
+            g_string_append(out, c == ' ' ? "\\s" : "\\t");
             continue;
         }
-        char *canon = group_for_uri(uri);
-        if (g_strcmp0(groups[i], canon) != 0) {
-            if (!g_key_file_has_group(g_kf, canon)) {
-                gsize nk = 0;
-                char **keys = g_key_file_get_keys(g_kf, groups[i], &nk, NULL);
-                for (gsize k = 0; k < nk; k++) {
-                    char *v = g_key_file_get_string(g_kf, groups[i], keys[k], NULL);
-                    g_key_file_set_string(g_kf, canon, keys[k], v ? v : "");
-                    g_free(v);
-                }
-                g_strfreev(keys);
-            }
-            g_key_file_remove_group(g_kf, groups[i], NULL);
-            changed = TRUE;
+        leading = FALSE;
+        switch (c) {
+            case '\\': g_string_append(out, "\\\\"); break;
+            case '\n': g_string_append(out, "\\n"); break;
+            case '\r': g_string_append(out, "\\r"); break;
+            case '\t': g_string_append(out, "\\t"); break;
+            default:   g_string_append_c(out, c);
         }
-        g_free(canon);
-        g_free(uri);
-    }
-    g_strfreev(groups);
-
-    if (changed) {
-        g_dirty = TRUE;
-        schedule_flush_locked();
     }
 }
 
-static void ensure_loaded_locked(void) {
-    if (g_loaded) return;
-    g_loaded = TRUE;
-    g_kf = g_key_file_new();
-    char *path = get_cache_filepath();
-    /* Отсутствие файла — не ошибка: просто начнём с пустого кэша. */
-    g_key_file_load_from_file(g_kf, path, G_KEY_FILE_NONE, NULL);
-    g_free(path);
-    normalize_legacy_locked();
+static void ini_append_str(GString *out, const char *key, const char *value) {
+    g_string_append(out, key);
+    g_string_append_c(out, '=');
+    ini_append_escaped(out, value ? value : "");
+    g_string_append_c(out, '\n');
 }
 
-static Track *track_from_group_locked(const char *group) {
-    char *uri = g_key_file_get_string(g_kf, group, "uri", NULL);
+/* Track -> группа [track:<uri>]. Группа канонична по uri: иначе одна и та же
+ * песня со старых форматов (например [track_N] с ключом uri) могла бы попасть в
+ * кэш дважды. */
+static void track_append_ini(GString *out, const Track *t) {
+    g_string_append(out, "[track:");
+    ini_append_escaped(out, t->uri);
+    g_string_append(out, "]\n");
+
+    ini_append_str(out, "uri", t->uri);
+    ini_append_str(out, "title", t->title);
+    ini_append_str(out, "artist", t->artist);
+    ini_append_str(out, "album", t->album);
+    ini_append_str(out, "album_artist", t->album_artist);
+    ini_append_str(out, "genre", t->genre);
+    g_string_append_printf(out, "track_number=%u\n", t->track_number);
+    g_string_append_printf(out, "disc_number=%u\n", t->disc_number);
+    g_string_append_printf(out, "year=%u\n", t->year);
+    g_string_append_printf(out, "duration=%u\n", t->duration);
+    ini_append_str(out, "cover_path", t->cover_path);
+    ini_append_str(out, "disc_subtitle", t->disc_subtitle);
+    g_string_append_printf(out, "mtime=%" G_GINT64_FORMAT "\n", t->mtime);
+    g_string_append_printf(out, "size=%" G_GUINT64_FORMAT "\n", t->size);
+    g_string_append_c(out, '\n');
+}
+
+/* Группа GKeyFile -> Track (счётчик ссылок = 1). NULL, если группы нет смысла
+ * загружать (нет uri или title). */
+static Track *track_from_group(GKeyFile *kf, const char *group) {
+    char *uri = g_key_file_get_string(kf, group, "uri", NULL);
     if (!uri || !*uri) {
         g_free(uri);
         return NULL;
     }
 
-    char *title        = g_key_file_get_string(g_kf, group, "title", NULL);
+    char *title        = g_key_file_get_string(kf, group, "title", NULL);
     if (!title) {
         g_free(uri);
         return NULL;
     }
-    char *artist       = g_key_file_get_string(g_kf, group, "artist", NULL);
-    char *album        = g_key_file_get_string(g_kf, group, "album", NULL);
-    char *album_artist = g_key_file_get_string(g_kf, group, "album_artist", NULL);
-    char *genre        = g_key_file_get_string(g_kf, group, "genre", NULL);
-    int track_num      = g_key_file_get_integer(g_kf, group, "track_number", NULL);
-    int disc_num       = g_key_file_get_integer(g_kf, group, "disc_number", NULL);
-    int year_val       = g_key_file_get_integer(g_kf, group, "year", NULL);
-    int duration_val   = g_key_file_get_integer(g_kf, group, "duration", NULL);
-    char *cover_path   = g_key_file_get_string(g_kf, group, "cover_path", NULL);
-    char *disc_subtitle = g_key_file_get_string(g_kf, group, "disc_subtitle", NULL);
+    char *artist       = g_key_file_get_string(kf, group, "artist", NULL);
+    char *album        = g_key_file_get_string(kf, group, "album", NULL);
+    char *album_artist = g_key_file_get_string(kf, group, "album_artist", NULL);
+    char *genre        = g_key_file_get_string(kf, group, "genre", NULL);
+    int track_num      = g_key_file_get_integer(kf, group, "track_number", NULL);
+    int disc_num       = g_key_file_get_integer(kf, group, "disc_number", NULL);
+    int year_val       = g_key_file_get_integer(kf, group, "year", NULL);
+    int duration_val   = g_key_file_get_integer(kf, group, "duration", NULL);
+    char *cover_path   = g_key_file_get_string(kf, group, "cover_path", NULL);
+    char *disc_subtitle = g_key_file_get_string(kf, group, "disc_subtitle", NULL);
 
     if (cover_path && !*cover_path) {
         g_free(cover_path);
@@ -118,8 +126,8 @@ static Track *track_from_group_locked(const char *group) {
 
     Track *t = track_new(uri, title, artist, album, album_artist, genre,
                          tn, dn, disc_subtitle, yr, cover_path, dur);
-    t->mtime = g_key_file_get_int64(g_kf, group, "mtime", NULL);
-    t->size  = g_key_file_get_uint64(g_kf, group, "size", NULL);
+    t->mtime = g_key_file_get_int64(kf, group, "mtime", NULL);
+    t->size  = g_key_file_get_uint64(kf, group, "size", NULL);
 
     g_free(uri);
     g_free(title);
@@ -132,39 +140,61 @@ static Track *track_from_group_locked(const char *group) {
     return t;
 }
 
-static GPtrArray *parse_all_locked(void) {
-    GPtrArray *tracks = g_ptr_array_new_with_free_func((GDestroyNotify)track_free);
+/* Загружает файл кэша в таблицу. GKeyFile освобождается сразу после разбора —
+ * в памяти остаются только сами треки. */
+static void load_file_locked(void) {
+    GKeyFile *kf = g_key_file_new();
+    char *path = get_cache_filepath();
+    /* Отсутствие файла — не ошибка: просто начнём с пустого кэша. */
+    gboolean ok = g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, NULL);
+    g_free(path);
+    if (!ok) {
+        g_key_file_free(kf);
+        return;
+    }
+
+    gboolean legacy = FALSE;
     gsize n = 0;
-    char **groups = g_key_file_get_groups(g_kf, &n);
+    char **groups = g_key_file_get_groups(kf, &n);
     for (gsize i = 0; i < n; i++) {
-        Track *t = track_from_group_locked(groups[i]);
-        if (t) g_ptr_array_add(tracks, t);
+        Track *t = track_from_group(kf, groups[i]);
+        if (!t) continue;
+
+        char *canon = g_strdup_printf("track:%s", t->uri);
+        if (g_strcmp0(groups[i], canon) != 0) legacy = TRUE;
+        g_free(canon);
+
+        g_hash_table_replace(g_tracks, g_strdup(t->uri), t); /* владение t */
     }
     g_strfreev(groups);
-    return tracks;
+    g_key_file_free(kf);
+
+    /* Прежние версии хранили записи как [track_N] с ключом uri: переписываем
+     * файл в канонический вид один раз, чтобы формат не расходился. */
+    if (legacy) schedule_flush_locked();
 }
 
-static void put_track_locked(const Track *t) {
-    if (!t || !t->uri || !*t->uri) return;
-    char *group = group_for_uri(t->uri);
-    g_key_file_set_string(g_kf, group, "uri", t->uri);
-    g_key_file_set_string(g_kf, group, "title", t->title ? t->title : "");
-    g_key_file_set_string(g_kf, group, "artist", t->artist ? t->artist : "");
-    g_key_file_set_string(g_kf, group, "album", t->album ? t->album : "");
-    g_key_file_set_string(g_kf, group, "album_artist", t->album_artist ? t->album_artist : "");
-    g_key_file_set_string(g_kf, group, "genre", t->genre ? t->genre : "");
-    g_key_file_set_integer(g_kf, group, "track_number", (int)t->track_number);
-    g_key_file_set_integer(g_kf, group, "disc_number", (int)t->disc_number);
-    g_key_file_set_integer(g_kf, group, "year", (int)t->year);
-    g_key_file_set_integer(g_kf, group, "duration", (int)t->duration);
-    g_key_file_set_string(g_kf, group, "cover_path", t->cover_path ? t->cover_path : "");
-    g_key_file_set_string(g_kf, group, "disc_subtitle", t->disc_subtitle ? t->disc_subtitle : "");
-    g_key_file_set_int64(g_kf, group, "mtime", t->mtime);
-    g_key_file_set_uint64(g_kf, group, "size", t->size);
-    g_free(group);
+static void ensure_loaded_locked(void) {
+    if (g_loaded) return;
+    g_loaded = TRUE;
+    g_tracks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                     (GDestroyNotify)track_unref);
+    load_file_locked();
 }
 
 /* ===== отложенная атомарная запись ===== */
+
+/* Готовый INI-текст всей медиатеки. Вызывается с удержанным g_lock;
+ * освобождать результат через g_free. */
+static char *serialize_locked_data(void) {
+    GString *out = g_string_new(NULL);
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, g_tracks);
+    while (g_hash_table_iter_next(&it, &key, &value))
+        track_append_ini(out, value);
+    return g_string_free(out, FALSE);
+}
 
 /* Сериализация и запись идут в фоновом потоке, чтобы не трогать главный цикл. */
 static void write_task(GTask *task, gpointer source_object, gpointer task_data,
@@ -176,7 +206,7 @@ static void write_task(GTask *task, gpointer source_object, gpointer task_data,
     char *data = NULL;
     g_mutex_lock(&g_lock);
     g_dirty = FALSE;
-    if (g_kf) data = g_key_file_to_data(g_kf, NULL, NULL);
+    if (g_tracks) data = serialize_locked_data();
     g_mutex_unlock(&g_lock);
 
     if (data) {
@@ -218,12 +248,34 @@ static void schedule_flush_locked(void) {
     g_source_unref(src);
 }
 
+/* ===== операции над таблицей (с удержанным g_lock) ===== */
+
+static void put_track_locked(const Track *t) {
+    if (!t || !t->uri || !*t->uri) return;
+    /* Тот же объект уже канонический (типовой случай: скан вернул неизменённый
+     * трек из кэша) — ничего не меняем и не пишем на диск. */
+    if (g_hash_table_lookup(g_tracks, t->uri) == t) return;
+    g_hash_table_replace(g_tracks, g_strdup(t->uri), track_ref((Track *)t));
+    schedule_flush_locked();
+}
+
+/* Снимок: массив НОВЫХ ссылок на те же треки. */
+static GPtrArray *snapshot_locked(void) {
+    GPtrArray *tracks = g_ptr_array_new_with_free_func((GDestroyNotify)track_unref);
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, g_tracks);
+    while (g_hash_table_iter_next(&it, &key, &value))
+        g_ptr_array_add(tracks, track_ref((Track *)value));
+    return tracks;
+}
+
 /* ===== публичный интерфейс ===== */
 
 GPtrArray *cache_load_tracks(void) {
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
-    GPtrArray *tracks = parse_all_locked();
+    GPtrArray *tracks = snapshot_locked();
     g_mutex_unlock(&g_lock);
     if (tracks->len == 0) {
         g_ptr_array_unref(tracks);
@@ -235,7 +287,7 @@ GPtrArray *cache_load_tracks(void) {
 GPtrArray *cache_snapshot_tracks(void) {
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
-    GPtrArray *tracks = parse_all_locked();
+    GPtrArray *tracks = snapshot_locked();
     g_mutex_unlock(&g_lock);
     return tracks;
 }
@@ -243,8 +295,7 @@ GPtrArray *cache_snapshot_tracks(void) {
 void cache_save_tracks(GPtrArray *tracks) {
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
-    g_key_file_free(g_kf);
-    g_kf = g_key_file_new();
+    g_hash_table_remove_all(g_tracks);
     if (tracks) {
         for (guint i = 0; i < tracks->len; i++)
             put_track_locked(g_ptr_array_index(tracks, i));
@@ -257,7 +308,6 @@ void cache_put_track(const Track *track) {
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
     put_track_locked(track);
-    schedule_flush_locked();
     g_mutex_unlock(&g_lock);
 }
 
@@ -265,9 +315,7 @@ void cache_remove_uri(const char *uri) {
     if (!uri) return;
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
-    char *group = group_for_uri(uri);
-    if (g_key_file_remove_group(g_kf, group, NULL)) schedule_flush_locked();
-    g_free(group);
+    if (g_hash_table_remove(g_tracks, uri)) schedule_flush_locked();
     g_mutex_unlock(&g_lock);
 }
 
@@ -277,29 +325,22 @@ gboolean cache_rename_uri(const char *old_uri, const char *new_uri,
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
 
-    char *old_group = group_for_uri(old_uri);
-    char *new_group = group_for_uri(new_uri);
+    Track *old = g_hash_table_lookup(g_tracks, old_uri);
     gboolean ok = FALSE;
-
-    if (g_key_file_has_group(g_kf, old_group)) {
-        gsize nk = 0;
-        char **keys = g_key_file_get_keys(g_kf, old_group, &nk, NULL);
-        for (gsize i = 0; i < nk; i++) {
-            char *v = g_key_file_get_string(g_kf, old_group, keys[i], NULL);
-            g_key_file_set_string(g_kf, new_group, keys[i], v ? v : "");
-            g_free(v);
-        }
-        g_strfreev(keys);
-        g_key_file_set_string(g_kf, new_group, "uri", new_uri);
-        g_key_file_set_int64(g_kf, new_group, "mtime", mtime);
-        g_key_file_set_uint64(g_kf, new_group, "size", size);
-        g_key_file_remove_group(g_kf, old_group, NULL);
+    if (old) {
+        /* URI трека меняется, поэтому старый объект (он может ещё жить в
+         * списках UI) не трогаем — кладём в кэш новый объект с новым uri. */
+        Track *moved = track_copy(old);
+        g_free(moved->uri);
+        moved->uri = g_strdup(new_uri);
+        moved->mtime = mtime;
+        moved->size = size;
+        g_hash_table_remove(g_tracks, old_uri);
+        g_hash_table_replace(g_tracks, g_strdup(new_uri), moved);
         schedule_flush_locked();
         ok = TRUE;
     }
 
-    g_free(old_group);
-    g_free(new_group);
     g_mutex_unlock(&g_lock);
     return ok;
 }
@@ -308,13 +349,12 @@ gboolean cache_lookup_meta(const char *uri, gint64 *mtime, guint64 *size) {
     if (!uri) return FALSE;
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
-    char *group = group_for_uri(uri);
-    gboolean ok = g_key_file_has_group(g_kf, group);
+    Track *t = g_hash_table_lookup(g_tracks, uri);
+    gboolean ok = t != NULL;
     if (ok) {
-        if (mtime) *mtime = g_key_file_get_int64(g_kf, group, "mtime", NULL);
-        if (size)  *size  = g_key_file_get_uint64(g_kf, group, "size", NULL);
+        if (mtime) *mtime = t->mtime;
+        if (size)  *size  = t->size;
     }
-    g_free(group);
     g_mutex_unlock(&g_lock);
     return ok;
 }
@@ -323,9 +363,8 @@ Track *cache_lookup_track(const char *uri) {
     if (!uri) return NULL;
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
-    char *group = group_for_uri(uri);
-    Track *t = g_key_file_has_group(g_kf, group) ? track_from_group_locked(group) : NULL;
-    g_free(group);
+    Track *t = g_hash_table_lookup(g_tracks, uri);
+    if (t) track_ref(t); /* отдаём новую ссылку */
     g_mutex_unlock(&g_lock);
     return t;
 }
@@ -333,24 +372,16 @@ Track *cache_lookup_track(const char *uri) {
 void cache_prune_missing(GHashTable *present_uris) {
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
-    gsize n = 0;
-    char **groups = g_key_file_get_groups(g_kf, &n);
     gboolean changed = FALSE;
-    for (gsize i = 0; i < n; i++) {
-        char *uri = g_key_file_get_string(g_kf, groups[i], "uri", NULL);
-        /* Записи без uri, а также неканонические группы (наследие прежнего
-         * формата) удаляем, чтобы не задваивать треки. */
-        char *canon = uri ? group_for_uri(uri) : NULL;
-        gboolean canonical = canon && g_strcmp0(groups[i], canon) == 0;
-        if (!uri || !canonical ||
-            !present_uris || !g_hash_table_contains(present_uris, uri)) {
-            g_key_file_remove_group(g_kf, groups[i], NULL);
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, g_tracks);
+    while (g_hash_table_iter_next(&it, &key, &value)) {
+        if (!present_uris || !g_hash_table_contains(present_uris, key)) {
+            g_hash_table_iter_remove(&it);
             changed = TRUE;
         }
-        g_free(canon);
-        g_free(uri);
     }
-    g_strfreev(groups);
     if (changed) schedule_flush_locked();
     g_mutex_unlock(&g_lock);
 }
@@ -371,7 +402,7 @@ void cache_flush(void) {
         g_flush_id = 0;
     }
     g_dirty = FALSE;
-    if (g_kf) data = g_key_file_to_data(g_kf, NULL, NULL);
+    if (g_tracks) data = serialize_locked_data();
     g_mutex_unlock(&g_lock);
 
     if (data) {

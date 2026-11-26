@@ -52,6 +52,7 @@ Track *track_new(const char *uri, const char *title, const char *artist,
                  guint track_number, guint disc_number, const char *disc_subtitle,
                  guint year, const char *cover_path, guint duration) {
     Track *t = g_new0(Track, 1);
+    t->refcount      = 1;
     t->uri           = g_strdup(uri);
     t->title         = g_strdup(title);
     t->artist        = g_strdup(artist);
@@ -77,8 +78,14 @@ Track *track_copy(const Track *t) {
     return copy;
 }
 
-void track_free(Track *t) {
+Track *track_ref(Track *t) {
+    if (t) g_atomic_int_inc(&t->refcount);
+    return t;
+}
+
+void track_unref(Track *t) {
     if (!t) return;
+    if (!g_atomic_int_dec_and_test(&t->refcount)) return;
     g_free(t->uri);
     g_free(t->title);
     g_free(t->artist);

@@ -3,9 +3,6 @@
 #include "track_menu.h"
 #include <adwaita.h>
 
-GtkWidget *ui_create_scrolled_list(GtkListBox **out_list);
-GtkWidget *ui_create_plain_row(const char *title, const char *subtitle);
-
 /* Обёртка вокруг одного дочернего виджета, которая не задаёт минимальную ширину
  * содержимого (натуральную ширину сохраняет). Нужна, чтобы AdwBottomSheet не
  * требовал ширины больше, чем есть в окне: боковые панели внутри содержимого
@@ -36,7 +33,6 @@ GtkWidget *ui_create_sidebar_row_content(const char *title, const char *icon_nam
  * Строка не выбирается и не активируется; suffix (может быть NULL) добавляется
  * справа — так у подзаголовка «Плейлисты» живёт кнопка создания. */
 GtkWidget *ui_create_sidebar_section_header(const char *title, GtkWidget *suffix);
-void       ui_clear_list_box(GtkListBox *list);
 void       ui_set_row_playing(AdwActionRow *row, gboolean is_playing);
 
 GtkWidget *ui_create_content_header(AdwOverlaySplitView *split_view);

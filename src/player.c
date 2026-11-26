@@ -6,6 +6,10 @@
 struct _Player {
     GstElement *playbin;
     GPtrArray *queue;      /* канонический порядок очереди; перемешивание его не меняет */
+    /* Множество указателей Track*, присутствующих в очереди (заимствованные).
+     * Каждая запись владеет уникальным объектом, поэтому проверка «есть ли уже
+     * такой трек» — O(1) вместо сканирования очереди. */
+    GHashTable *queue_index;
     guint queue_version;   /* растёт при каждом изменении СОСТАВА очереди */
     int current_index;     /* индекс играющего трека в queue */
     gboolean is_playing;
@@ -204,7 +208,8 @@ static gboolean on_bus_message(GstBus *bus, GstMessage *msg, gpointer user_data)
 Player *player_new(void) {
     Player *p = g_new0(Player, 1);
     p->playbin = gst_element_factory_make("playbin", "player");
-    p->queue = g_ptr_array_new_with_free_func((GDestroyNotify)track_free);
+    p->queue = g_ptr_array_new_with_free_func((GDestroyNotify)track_unref);
+    p->queue_index = g_hash_table_new(g_direct_hash, g_direct_equal);
     p->current_index = -1;
     p->is_playing = FALSE;
 
@@ -237,6 +242,9 @@ void player_free(Player *p) {
     if (p->queue) {
         g_ptr_array_unref(p->queue);
     }
+    if (p->queue_index) {
+        g_hash_table_destroy(p->queue_index);
+    }
     g_free(p->order);
     g_free(p);
 }
@@ -246,13 +254,34 @@ void player_set_state_changed_cb(Player *p, PlayerStateChangedCb cb, gpointer us
     p->state_changed_data = user_data;
 }
 
-void player_set_queue_and_play(Player *p, GPtrArray *tracks, int start_index) {
+/* Каждая запись очереди должна владеть отдельным объектом трека: иначе две
+ * записи с одним указателем нельзя различить при удалении/дублировании по
+ * указателю (player_remove_from_queue). Поэтому первый экземпляр берём ссылкой
+ * (память не дублируется), а повтор того же трека — копией. Уникальность
+ * обеспечивает queue_index — единый источник правды для обеих веток. */
+static Track *queue_take_unique(Player *p, Track *track) {
+    if (g_hash_table_contains(p->queue_index, track)) return track_copy(track);
+    g_hash_table_add(p->queue_index, track);
+    return track_ref(track);
+}
+
+/* Заполняет очищенную очередь треками, гарантируя уникальность указателей. */
+static void queue_fill(Player *p, GPtrArray *tracks) {
+    for (guint i = 0; i < tracks->len; i++)
+        g_ptr_array_add(p->queue, queue_take_unique(p, g_ptr_array_index(tracks, i)));
+}
+
+/* Очищает очередь вместе с индексом указателей (перед новым наполнением). */
+static void queue_reset(Player *p) {
     g_ptr_array_set_size(p->queue, 0);
+    g_hash_table_remove_all(p->queue_index);
+}
+
+void player_set_queue_and_play(Player *p, GPtrArray *tracks, int start_index) {
+    queue_reset(p);
     p->queue_version++;
     if (tracks) {
-        for (guint i = 0; i < tracks->len; i++) {
-            g_ptr_array_add(p->queue, track_copy(g_ptr_array_index(tracks, i)));
-        }
+        queue_fill(p, tracks);
     }
     if (p->queue->len > 0 && start_index >= 0 && start_index < (int)p->queue->len) {
         if (p->shuffle) shuffle_rebuild(p, start_index);
@@ -269,12 +298,10 @@ void player_set_queue_and_play(Player *p, GPtrArray *tracks, int start_index) {
 }
 
 void player_restore_queue(Player *p, GPtrArray *tracks, int current_index) {
-    g_ptr_array_set_size(p->queue, 0);
+    queue_reset(p);
     p->queue_version++;
     if (tracks) {
-        for (guint i = 0; i < tracks->len; i++) {
-            g_ptr_array_add(p->queue, track_copy(g_ptr_array_index(tracks, i)));
-        }
+        queue_fill(p, tracks);
     }
     if (p->queue->len > 0 && current_index >= 0 && current_index < (int)p->queue->len) {
         p->current_index = current_index;
@@ -307,7 +334,7 @@ void player_restore_queue(Player *p, GPtrArray *tracks, int current_index) {
 
 /* Полностью очищает очередь и останавливает воспроизведение. */
 void player_clear_queue(Player *p) {
-    g_ptr_array_set_size(p->queue, 0);
+    queue_reset(p);
     p->queue_version++;
     if (p->playbin) {
         gst_element_set_state(p->playbin, GST_STATE_NULL);
@@ -320,8 +347,8 @@ void player_clear_queue(Player *p) {
 
 void player_add_to_queue(Player *p, Track *track, gboolean play_now) {
     if (!track) return;
-    Track *copy = track_copy(track);
-    g_ptr_array_add(p->queue, copy);
+    Track *entry = queue_take_unique(p, track);
+    g_ptr_array_add(p->queue, entry);
     order_on_append(p, (int)p->queue->len - 1);
     p->queue_version++;
     if (play_now || p->current_index == -1) {
@@ -335,25 +362,26 @@ void player_add_to_queue(Player *p, Track *track, gboolean play_now) {
  * не играет, трек добавляется в очередь и начинает воспроизводиться. */
 void player_insert_next(Player *p, Track *track) {
     if (!track) return;
-    Track *copy = track_copy(track);
+    Track *entry = queue_take_unique(p, track);
     if (p->current_index >= 0) {
         int pos = p->current_index + 1;
         if (pos > (int)p->queue->len) pos = (int)p->queue->len;
-        g_ptr_array_insert(p->queue, pos, copy);
+        g_ptr_array_insert(p->queue, pos, entry);
         order_on_insert(p, pos);
         p->queue_version++;
         notify_state_changed(p);
     } else {
-        g_ptr_array_add(p->queue, copy);
+        g_ptr_array_add(p->queue, entry);
         order_on_append(p, (int)p->queue->len - 1);
         p->queue_version++;
         player_play_index(p, (int)p->queue->len - 1);
     }
 }
 
-/* Вставляет копию трека сразу после него самого в очереди («дублировать»).
- * Сравнение по указателю на объект трека — так же, как в
- * player_remove_from_queue; если трек в очереди не найден, ничего не делаем. */
+/* Вставляет ещё одну запись трека сразу после него самого в очереди
+ * («дублировать»); новая запись владеет отдельным объектом, чтобы её можно было
+ * независимо удалить (сравнение записей — по указателю на объект трека, как и в
+ * player_remove_from_queue). Если трек в очереди не найден, ничего не делаем. */
 void player_duplicate_in_queue(Player *p, Track *track) {
     if (!track) return;
 
@@ -363,9 +391,9 @@ void player_duplicate_in_queue(Player *p, Track *track) {
     }
     if (index < 0) return;
 
-    Track *copy = track_copy(track);
+    Track *entry = queue_take_unique(p, track);
     int pos = index + 1;
-    g_ptr_array_insert(p->queue, pos, copy);
+    g_ptr_array_insert(p->queue, pos, entry);
     order_on_insert(p, pos);
     p->queue_version++;
     notify_state_changed(p);
@@ -383,9 +411,11 @@ void player_remove_from_queue(Player *p, Track *track) {
     }
     if (index < 0) return;
 
-    /* remove_index освобождает элемент (free func = track_free): указатель
-     * track после этого недействителен. */
+    /* remove_index разыменует элемент (free func = track_unref); объект может
+     * остаться жить в других списках, поэтому указатель track не считаем
+     * недействительным. */
     g_ptr_array_remove_index(p->queue, index);
+    g_hash_table_remove(p->queue_index, track);
     order_on_remove(p, index);
     p->queue_version++;
 

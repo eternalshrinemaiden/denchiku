@@ -256,7 +256,7 @@ static void process_file(Watcher *w, const char *uri) {
     g_free(path);
     if (track) {
         cache_put_track(track);
-        track_free(track);
+        track_unref(track);
         watcher_queue_deliver(w);
     }
 }

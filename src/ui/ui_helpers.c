@@ -2,28 +2,6 @@
 #include "track.h"
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
-GtkWidget *ui_create_scrolled_list(GtkListBox **out_list) {
-    GtkWidget *scrolled = gtk_scrolled_window_new();
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-
-    GtkWidget *clamp = adw_clamp_new();
-    adw_clamp_set_maximum_size(ADW_CLAMP(clamp), 800);
-    gtk_widget_set_margin_top(clamp, 16);
-    gtk_widget_set_margin_bottom(clamp, 16);
-    gtk_widget_set_margin_start(clamp, 12);
-    gtk_widget_set_margin_end(clamp, 12);
-
-    GtkListBox *list = GTK_LIST_BOX(gtk_list_box_new());
-    gtk_widget_add_css_class(GTK_WIDGET(list), "boxed-list");
-    gtk_list_box_set_selection_mode(list, GTK_SELECTION_NONE);
-
-    adw_clamp_set_child(ADW_CLAMP(clamp), GTK_WIDGET(list));
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), clamp);
-
-    *out_list = list;
-    return scrolled;
-}
-
 /* ================= Контейнер, не задающий минимальную ширину =================
  * Обнуляет минимальную ширину ребёнка по горизонтали (натуральную сохраняет),
  * чтобы AdwBottomSheet не запрашивал больше ширины, чем есть в окне. Внутренние
@@ -161,37 +139,6 @@ GtkWidget *ui_create_fixed_size_bin(GtkWidget *child, int size) {
     return GTK_WIDGET(bin);
 }
 
-/* AdwActionRow держит заголовок и подзаголовок переносимыми (wrap=TRUE). Если
- * при этом включено усечение (title-lines/subtitle-lines), GtkLabel в measure()
- * может вернуть минимальную ширину больше натуральной (min > nat), и GTK
- * предупреждает «natural size must be >= min size». Отключаем перенос у
- * усечённых подписей: одна строка с многоточием без переноса. */
-static void disable_wrap_on_ellipsized_labels(GtkWidget *widget) {
-    if (GTK_IS_LABEL(widget) &&
-        gtk_label_get_ellipsize(GTK_LABEL(widget)) != PANGO_ELLIPSIZE_NONE) {
-        gtk_label_set_wrap(GTK_LABEL(widget), FALSE);
-    }
-    for (GtkWidget *child = gtk_widget_get_first_child(widget);
-         child; child = gtk_widget_get_next_sibling(child)) {
-        disable_wrap_on_ellipsized_labels(child);
-    }
-}
-
-GtkWidget *ui_create_plain_row(const char *title, const char *subtitle) {
-    AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
-    adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title ? title : "");
-    /* Название и подзаголовок — всегда одна строка (с многоточием), чтобы при
-     * сужении окна они не переносились и не увеличивали высоту строки. */
-    adw_action_row_set_title_lines(row, 1);
-    adw_action_row_set_subtitle_lines(row, 1);
-    if (subtitle) {
-        adw_action_row_set_subtitle(row, subtitle);
-    }
-    disable_wrap_on_ellipsized_labels(GTK_WIDGET(row));
-    return GTK_WIDGET(row);
-}
-
 GtkWidget *ui_create_sidebar_row_content(const char *title, const char *icon_name) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_set_margin_top(box, 8);
@@ -245,14 +192,6 @@ GtkWidget *ui_create_sidebar_section_header(const char *title, GtkWidget *suffix
 
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
     return row;
-}
-
-void ui_clear_list_box(GtkListBox *list) {
-    if (!list) return;
-    GtkWidget *child;
-    while ((child = gtk_widget_get_first_child(GTK_WIDGET(list))) != NULL) {
-        gtk_list_box_remove(list, child);
-    }
 }
 
 void ui_set_row_playing(AdwActionRow *row, gboolean is_playing) {

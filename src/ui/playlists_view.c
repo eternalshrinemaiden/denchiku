@@ -76,7 +76,7 @@ static void fill_current(PlaylistsView *pv) {
     GPtrArray *old = pv->current_tracks;
     pv->current_tracks = tracks
         ? tracks
-        : g_ptr_array_new_with_free_func((GDestroyNotify)track_free);
+        : g_ptr_array_new_with_free_func((GDestroyNotify)track_unref);
 
     track_list_set_tracks(pv->track_list, pv->current_tracks);
     Track *cur = player_get_current_track(pv->player);

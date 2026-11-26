@@ -546,7 +546,7 @@ void main_window_restore_session(GtkWidget *window, GPtrArray *tracks) {
         }
     }
 
-    GPtrArray *q = g_ptr_array_new(); /* без free-func: треки общие, player копирует */
+    GPtrArray *q = g_ptr_array_new(); /* без free-func: треки общие, player берёт ссылки */
     int current = -1;
     for (int i = 0; i < s->queue_len; i++) {
         Track *t = g_hash_table_lookup(by_uri, s->queue_uris[i]);
