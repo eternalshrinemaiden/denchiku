@@ -73,7 +73,13 @@ static gboolean tracks_equal(GPtrArray *a, GPtrArray *b) {
     if (!a || !b) return (!a && !b);
     if (a->len != b->len) return FALSE;
     for (guint i = 0; i < a->len; i++) {
-        if (!track_equals(g_ptr_array_index(a, i), g_ptr_array_index(b, i))) return FALSE;
+        Track *ta = g_ptr_array_index(a, i);
+        Track *tb = g_ptr_array_index(b, i);
+        /* Кэш отдаёт общие объекты: неизменённый трек — тот же указатель, так что
+         * в типичном случае (скан вернул ту же медиатеку) сравнение сводится к
+         * сравнению указателей, без разбора строк. */
+        if (ta == tb) continue;
+        if (!track_equals(ta, tb)) return FALSE;
     }
     return TRUE;
 }

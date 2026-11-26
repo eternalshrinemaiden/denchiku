@@ -152,7 +152,7 @@ static void on_grid_bind(GtkListItemFactory *f, GtkListItem *li, gpointer d) {
 
     const char *cov = mb->cfg.get_cover_path ? mb->cfg.get_cover_path(item) : NULL;
     GtkWidget *old = gtk_widget_get_first_child(cover_slot);
-    if (old) gtk_box_remove(GTK_BOX(cover_slot), old);
+    if (old) { ui_detach_cover(old); gtk_box_remove(GTK_BOX(cover_slot), old); }
     gtk_box_append(GTK_BOX(cover_slot),
                    mb->cfg.round_covers
                        ? ui_create_round_cover_widget(cov, cover_size)
@@ -198,7 +198,7 @@ static void on_col_cover_bind(GtkListItemFactory *f, GtkListItem *li, gpointer d
     int size = view_controls_get_list_cover_size(mb->controls);
     const char *cov = mb->cfg.get_cover_path ? mb->cfg.get_cover_path(item) : NULL;
     GtkWidget *old = gtk_widget_get_first_child(slot);
-    if (old) gtk_box_remove(GTK_BOX(slot), old);
+    if (old) { ui_detach_cover(old); gtk_box_remove(GTK_BOX(slot), old); }
     gtk_box_append(GTK_BOX(slot),
                    mb->cfg.round_covers
                        ? ui_create_round_cover_widget(cov, size)

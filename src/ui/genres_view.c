@@ -499,7 +499,7 @@ static void on_all_grid_bind(GtkListItemFactory *factory, GtkListItem *li, gpoin
     gtk_label_set_max_width_chars(GTK_LABEL(subtitle), max_chars);
 
     GtkWidget *old = gtk_widget_get_first_child(cover_slot);
-    if (old) gtk_box_remove(GTK_BOX(cover_slot), old);
+    if (old) { ui_detach_cover(old); gtk_box_remove(GTK_BOX(cover_slot), old); }
     GtkWidget *cover = item->is_artist
                            ? ui_create_round_cover_widget(item->cover, GENRE_GRID_COVER_SIZE)
                            : ui_create_cover_widget(item->cover, GENRE_GRID_COVER_SIZE);
@@ -822,7 +822,7 @@ static void set_row_cover(GtkWidget *box, const char *cover_path) {
     GtkWidget *slot = g_object_get_data(G_OBJECT(box), "cover-slot");
     if (!slot) return;
     GtkWidget *old = gtk_widget_get_first_child(slot);
-    if (old) gtk_box_remove(GTK_BOX(slot), old);
+    if (old) { ui_detach_cover(old); gtk_box_remove(GTK_BOX(slot), old); }
     gtk_box_append(GTK_BOX(slot),
                    ui_create_fixed_size_bin(
                        ui_create_cover_widget(cover_path, UI_ROW_COVER_SIZE),

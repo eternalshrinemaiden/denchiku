@@ -179,7 +179,7 @@ static void set_playing_index_internal(TrackList *tl, int new_index) {
 static void set_cover(GtkWidget *slot, const char *cover_path, int size) {
     if (!slot) return;
     GtkWidget *old = gtk_widget_get_first_child(slot);
-    if (old) gtk_box_remove(GTK_BOX(slot), old);
+    if (old) { ui_detach_cover(old); gtk_box_remove(GTK_BOX(slot), old); }
     gtk_box_append(GTK_BOX(slot),
                    ui_create_cover_widget(cover_path ? cover_path : "", size));
 }
@@ -594,7 +594,7 @@ static void cover_unbind(GtkListItemFactory *factory, GtkListItem *li, gpointer 
     GtkWidget *slot = gtk_list_item_get_child(li);
     if (!slot) return;
     GtkWidget *old = gtk_widget_get_first_child(slot);
-    if (old) gtk_box_remove(GTK_BOX(slot), old);
+    if (old) { ui_detach_cover(old); gtk_box_remove(GTK_BOX(slot), old); }
 }
 
 /* Пересобирает фабрику столбца обложек при смене размера: у GtkColumnView замена

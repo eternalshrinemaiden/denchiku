@@ -53,6 +53,11 @@ void       ui_make_cover_round(GtkWidget *widget);
  * GtkPicture с сохранением пропорций, растягивается по ширине/высоте. */
 GtkWidget *ui_create_cover_picture(const char *cover_path, int size);
 
+/* Снимает незавершённый асинхронный запрос обложки при отвязке строки (прокрутка
+ * унесла её с экрана): такая обложка не декодируется и не кэшируется. Принимает
+ * как саму картинку, так и виджет-обёртку вокруг неё. */
+void ui_detach_cover(GtkWidget *widget);
+
 /* Синхронно декодирует уменьшенную обложку в текстуру (для размытого фона).
  * Возвращает NULL, если обложки нет или её не удалось прочитать. */
 GdkTexture *ui_create_cover_texture(const char *cover_path, int size);

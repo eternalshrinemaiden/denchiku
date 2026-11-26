@@ -307,12 +307,6 @@ static guint cover_cache_count;    /* число записей в кэше */
 #define COVER_CACHE_MAX_BYTES ((gsize)32 * 1024 * 1024)
 #define COVER_CACHE_MAX_ENTRIES 2000
 
-/* Потолок на число обложек, декодируемых одновременно. При быстрой прокрутке
- * запросов больше, чем успевает пул из двух потоков; без лимита очередь задач и
- * результаты «в полёте» (с pixbuf) разрастаются. Сверх лимита обложка не
- * декодируется — она догрузится при следующей привязке строки. */
-#define COVER_MAX_PENDING 96
-
 static void cover_decode_worker(gpointer data, gpointer user_data);
 
 static void cover_cache_touch(const char *key) {
@@ -489,6 +483,10 @@ static void attach_cover(GtkWidget *pic, const char *cover_path, int size) {
     if (target < 1) target = 1;
 
     char *key = g_strdup_printf("%s\x1f%d", cover_path, target);
+    /* Ключ храним на самой картинке: при отвязке строки (прокрутка) запрос можно
+     * будет снять (см. ui_detach_cover), чтобы не декодировать ушедшие обложки. */
+    g_object_set_data_full(G_OBJECT(pic), "cover-key", g_strdup(key), g_free);
+
     CoverEntry *cached = g_hash_table_lookup(cover_cache, key);
     if (cached) {
         cover_cache_touch(key);
@@ -504,12 +502,11 @@ static void attach_cover(GtkWidget *pic, const char *cover_path, int size) {
         return;
     }
 
-    /* Ограничиваем число одновременных декодов (см. COVER_MAX_PENDING). */
-    if (g_hash_table_size(cover_waiters) >= COVER_MAX_PENDING) {
-        g_free(key);
-        return;
-    }
-
+    /* Число одновременно декодируемых обложек ограничивает сам пул (2 потока),
+     * а очередь задач состоит из лёгких описаний. Ограничивать её числом нельзя:
+     * при быстрой прокрутке по сетке за раз привязываются сотни строк, и всё
+     * сверх лимита оставалось без обложки — повторного запроса для уже привязанной
+     * строки не будет. Поэтому задачу ставим всегда. */
     waiters = g_ptr_array_new_with_free_func(g_object_unref);
     g_hash_table_insert(cover_waiters, key, waiters); /* забирает владение key */
 
@@ -520,6 +517,33 @@ static void attach_cover(GtkWidget *pic, const char *cover_path, int size) {
     g_thread_pool_push(cover_pool, job, NULL);
 
     g_ptr_array_add(waiters, g_object_ref(pic));
+}
+
+/* Снимает незавершённый запрос обложки для этой картинки (или виджета-обёртки,
+ * внутри которого она лежит). Вызывается при отвязке строки: ушедшую с экрана
+ * обложку декодировать не нужно, а её результат не кэшируется. Если по тому же
+ * ключу ждут другие ещё видимые строки — они продолжат ждать. */
+void ui_detach_cover(GtkWidget *widget) {
+    if (!widget) return;
+
+    gpointer key = g_object_get_data(G_OBJECT(widget), "cover-key");
+    if (key) {
+        GPtrArray *waiters = g_hash_table_lookup(cover_waiters, key);
+        if (waiters) {
+            for (guint i = 0; i < waiters->len; i++) {
+                if (g_ptr_array_index(waiters, i) == widget) {
+                    g_ptr_array_remove_index_fast(waiters, i);
+                    break;
+                }
+            }
+            if (waiters->len == 0) g_hash_table_remove(cover_waiters, key);
+        }
+        return; /* картинка — лист, глубже обложек нет */
+    }
+
+    for (GtkWidget *c = gtk_widget_get_first_child(widget); c;
+         c = gtk_widget_get_next_sibling(c))
+        ui_detach_cover(c);
 }
 
 /* Круглая обложка: тот же контейнер, но со скруглением до круга; overflow:hidden
