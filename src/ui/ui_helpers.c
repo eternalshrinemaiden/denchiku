@@ -261,14 +261,15 @@ GtkWidget *ui_create_play_shuffle_group(GtkWidget **out_play_btn,
  * Декодирование обложек альбомов (нередко 800x800 и несколько мегабайт) на
  * главном потоке занимает десятки миллисекунд на файл. При построении списков
  * GTK привязывает сотни элементов сразу, поэтому синхронное декодирование
- * надолго замораживает старт. Декодируем в фоновом пуле, кэшируем готовые
- * текстуры по (путь, размер) и обновляем виджеты по готовности. Все обращения к
- * кэшу и спискам ожидающих выполняются только в главном потоке. */
+ * надолго замораживает старт. Декодируем в фоновом пуле под реальный масштаб
+ * экрана, кэшируем готовые текстуры по (путь, размер в пикселях) и обновляем
+ * виджеты по готовности. Все обращения к кэшу и спискам ожидающих — только в
+ * главном потоке. */
 
 typedef struct {
     char *key;
     char *path;
-    int size;
+    int target;        /* размер декодирования в пикселях (логический размер × масштаб) */
 } CoverDecode;
 
 typedef struct {
@@ -276,30 +277,43 @@ typedef struct {
     GdkPixbuf *pixbuf;
 } CoverResult;
 
-static GHashTable *cover_cache;    /* "путь\x1fразмер" -> GdkTexture* (принадлежит кэшу) */
-static GHashTable *cover_waiters;  /* "путь\x1fразмер" -> GPtrArray<GtkPicture*> */
+/* Запись кэша: текстура и её реальный размер в байтах. Текстура удерживает
+ * исходный pixbuf (через GBytes), поэтому учитываем rowstride × height, а не
+ * приблизительную RGBA-оценку. */
+typedef struct {
+    GdkTexture *texture;
+    gsize bytes;
+} CoverEntry;
+
+static void cover_entry_free(gpointer data) {
+    CoverEntry *e = data;
+    g_object_unref(e->texture);
+    g_free(e);
+}
+
+static GHashTable *cover_cache;    /* "путь\x1fпиксели" -> CoverEntry* (принадлежит кэшу) */
+static GHashTable *cover_waiters;  /* "путь\x1fпиксели" -> GPtrArray<GtkPicture*> */
 static GThreadPool *cover_pool;
 static GQueue *cover_lru;          /* ключи в порядке использования: голова — самый старый */
 static GHashTable *cover_lru_nodes;/* ключ -> GList* (узел в cover_lru) для O(1) доступа */
-static gsize cover_cache_bytes;    /* суммарный размер декодированных текстур */
+static gsize cover_cache_bytes;    /* суммарный размер удерживаемых текстур, реальные байты */
 static guint cover_cache_count;    /* число записей в кэше */
 
 /* Ограничиваем кэш по ПАМЯТИ, а не по числу записей: крупные обложки
- * (крупный зум альбомов) занимают мегабайты каждая, и 400 записей раздували
- * потребление до сотен мегабайт. При переполнении вытесняется самая давно
- * использованная запись (LRU). Лимит по числу оставляем как страховку от
- * распухания на множестве мелких текстур. */
-#define COVER_CACHE_MAX_BYTES ((gsize)64 * 1024 * 1024)
+ * (крупный зум альбомов) занимают мегабайты каждая. При переполнении вытесняется
+ * самая давно использованная запись (LRU). Лимит по числу оставляем как страховку
+ * от распухания на множестве мелких текстур. Бюджет снижен до 32 МБ: заметная
+ * часть пикового потребления приходилась именно на кэш обложек. */
+#define COVER_CACHE_MAX_BYTES ((gsize)32 * 1024 * 1024)
 #define COVER_CACHE_MAX_ENTRIES 2000
 
-static void cover_decode_worker(gpointer data, gpointer user_data);
+/* Потолок на число обложек, декодируемых одновременно. При быстрой прокрутке
+ * запросов больше, чем успевает пул из двух потоков; без лимита очередь задач и
+ * результаты «в полёте» (с pixbuf) разрастаются. Сверх лимита обложка не
+ * декодируется — она догрузится при следующей привязке строки. */
+#define COVER_MAX_PENDING 96
 
-static gsize texture_size_bytes(GdkTexture *texture) {
-    /* RGBA-оценка: формат текстуры может быть без альфы, но переоценка здесь
-     * безопаснее недооценки (кэш только вытеснит чуть больше). */
-    return (gsize)gdk_texture_get_width(texture) *
-           (gsize)gdk_texture_get_height(texture) * 4;
-}
+static void cover_decode_worker(gpointer data, gpointer user_data);
 
 static void cover_cache_touch(const char *key) {
     /* Узел ищем через хэш: линейный поиск по очереди на каждый показ обложки
@@ -315,36 +329,38 @@ static void cover_cache_evict_one(void) {
     char *oldest = g_queue_pop_head(cover_lru);
     if (!oldest) return;
     g_hash_table_remove(cover_lru_nodes, oldest);
-    GdkTexture *texture = g_hash_table_lookup(cover_cache, oldest);
-    if (texture) {
-        cover_cache_bytes -= texture_size_bytes(texture);
+    CoverEntry *e = g_hash_table_lookup(cover_cache, oldest);
+    if (e) {
+        cover_cache_bytes -= e->bytes;
         if (cover_cache_count > 0) cover_cache_count--;
     }
-    g_hash_table_remove(cover_cache, oldest);
+    g_hash_table_remove(cover_cache, oldest); /* освобождает запись и текстуру */
     g_free(oldest);
 }
 
-static void cover_cache_store(const char *key, GdkTexture *texture) {
+static void cover_cache_store(const char *key, GdkTexture *texture, gsize bytes) {
     /* Защита от повторной вставки того же ключа (обычно исключена вызовами):
      * снимаем старый узел LRU, чтобы не дублировать его в очереди и хэше. */
     if (g_hash_table_contains(cover_lru_nodes, key)) {
         GList *node = g_hash_table_lookup(cover_lru_nodes, key);
         if (node) g_queue_delete_link(cover_lru, node);
         g_hash_table_remove(cover_lru_nodes, key);
-        GdkTexture *old = g_hash_table_lookup(cover_cache, key);
+        CoverEntry *old = g_hash_table_lookup(cover_cache, key);
         if (old) {
-            cover_cache_bytes -= texture_size_bytes(old);
+            cover_cache_bytes -= old->bytes;
             if (cover_cache_count > 0) cover_cache_count--;
         }
     }
 
-    gsize bytes = texture_size_bytes(texture);
     while (!g_queue_is_empty(cover_lru) &&
            (cover_cache_count >= COVER_CACHE_MAX_ENTRIES ||
             cover_cache_bytes + bytes > COVER_CACHE_MAX_BYTES)) {
         cover_cache_evict_one();
     }
-    g_hash_table_replace(cover_cache, g_strdup(key), g_object_ref(texture));
+    CoverEntry *entry = g_new0(CoverEntry, 1);
+    entry->texture = g_object_ref(texture);
+    entry->bytes = bytes;
+    g_hash_table_replace(cover_cache, g_strdup(key), entry);
     g_queue_push_tail(cover_lru, g_strdup(key));
     g_hash_table_insert(cover_lru_nodes, g_strdup(key), cover_lru->tail);
     cover_cache_bytes += bytes;
@@ -353,7 +369,7 @@ static void cover_cache_store(const char *key, GdkTexture *texture) {
 
 static void cover_loader_init(void) {
     if (cover_pool) return;
-    cover_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+    cover_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, cover_entry_free);
     cover_waiters = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
                                           (GDestroyNotify)g_ptr_array_unref);
     cover_lru = g_queue_new();
@@ -385,7 +401,12 @@ static gboolean cover_decode_done(gpointer data) {
     CoverResult *res = data;
 
     GdkTexture *texture = NULL;
+    gsize bytes = 0;
     if (res->pixbuf) {
+        /* Реальный размер удерживаемого буфера: текстура ссылается на пиксели
+         * pixbuf, а не копирует их. */
+        bytes = (gsize)gdk_pixbuf_get_rowstride(res->pixbuf) *
+                (gsize)gdk_pixbuf_get_height(res->pixbuf);
         texture = pixbuf_to_texture(res->pixbuf);
         g_object_unref(res->pixbuf);
     }
@@ -398,7 +419,7 @@ static gboolean cover_decode_done(gpointer data) {
                                           GDK_PAINTABLE(texture));
             }
             if (!g_hash_table_contains(cover_cache, res->key)) {
-                cover_cache_store(res->key, texture);
+                cover_cache_store(res->key, texture, bytes);
             }
         }
         /* Снимаем запись ожидания: удаление освободит массив и разыменует виджеты. */
@@ -415,8 +436,8 @@ static void cover_decode_worker(gpointer data, gpointer user_data) {
     (void)user_data;
     CoverDecode *job = data;
 
-    /* Декодируем с запасом ×2 под HiDPI, сохраняя пропорции. */
-    int target = job->size * 2;
+    /* Размер декодирования (в пикселях) уже посчитан с учётом масштаба экрана. */
+    int target = job->target;
     GError *err = NULL;
     GdkPixbuf *pix = gdk_pixbuf_new_from_file_at_scale(job->path, target, target, TRUE, &err);
     if (err) g_error_free(err);
@@ -435,30 +456,69 @@ static gboolean cover_exists(const char *path) {
     return path && *path && g_file_test(path, G_FILE_TEST_EXISTS);
 }
 
+/* Масштаб отрисовки для виджета: шкала его поверхности, а если виджет ещё не в
+ * дереве (создаётся до вставки) — шкала основного монитора. */
+static int cover_decode_scale(GtkWidget *widget) {
+    GtkNative *native = widget ? gtk_widget_get_native(widget) : NULL;
+    if (native) {
+        GdkSurface *surface = gtk_native_get_surface(native);
+        if (surface) {
+            int s = gdk_surface_get_scale_factor(surface);
+            if (s >= 1) return s;
+        }
+    }
+    GdkDisplay *display = gdk_display_get_default();
+    if (display) {
+        GListModel *monitors = gdk_display_get_monitors(display);
+        if (monitors && g_list_model_get_n_items(monitors) > 0) {
+            GdkMonitor *mon = g_list_model_get_item(monitors, 0);
+            int s = mon ? gdk_monitor_get_scale_factor(mon) : 1;
+            if (mon) g_object_unref(mon);
+            if (s >= 1) return s;
+        }
+    }
+    return 1;
+}
+
 /* Подключает асинхронную загрузку обложки (кэш + пул) к готовому GtkPicture. */
 static void attach_cover(GtkWidget *pic, const char *cover_path, int size) {
-    char *key = g_strdup_printf("%s\x1f%d", cover_path, size);
-    GdkTexture *cached = g_hash_table_lookup(cover_cache, key);
+    /* Декодируем под реальный масштаб экрана, а не с фиксированным запасом ×2:
+     * на 1× это вчетверо меньше пикселей (и памяти) на ту же картинку. Ключ
+     * кэша — путь + размер в пикселях, поэтому разный масштаб даёт разные записи. */
+    int target = size * cover_decode_scale(pic);
+    if (target < 1) target = 1;
+
+    char *key = g_strdup_printf("%s\x1f%d", cover_path, target);
+    CoverEntry *cached = g_hash_table_lookup(cover_cache, key);
     if (cached) {
         cover_cache_touch(key);
-        gtk_picture_set_paintable(GTK_PICTURE(pic), GDK_PAINTABLE(cached));
+        gtk_picture_set_paintable(GTK_PICTURE(pic), GDK_PAINTABLE(cached->texture));
         g_free(key);
         return;
     }
 
     GPtrArray *waiters = g_hash_table_lookup(cover_waiters, key);
     if (waiters) {
+        g_ptr_array_add(waiters, g_object_ref(pic));
         g_free(key);
-    } else {
-        waiters = g_ptr_array_new_with_free_func(g_object_unref);
-        g_hash_table_insert(cover_waiters, key, waiters);
-
-        CoverDecode *job = g_new0(CoverDecode, 1);
-        job->key = g_strdup(key);
-        job->path = g_strdup(cover_path);
-        job->size = size;
-        g_thread_pool_push(cover_pool, job, NULL);
+        return;
     }
+
+    /* Ограничиваем число одновременных декодов (см. COVER_MAX_PENDING). */
+    if (g_hash_table_size(cover_waiters) >= COVER_MAX_PENDING) {
+        g_free(key);
+        return;
+    }
+
+    waiters = g_ptr_array_new_with_free_func(g_object_unref);
+    g_hash_table_insert(cover_waiters, key, waiters); /* забирает владение key */
+
+    CoverDecode *job = g_new0(CoverDecode, 1);
+    job->key = g_strdup(key);
+    job->path = g_strdup(cover_path);
+    job->target = target;
+    g_thread_pool_push(cover_pool, job, NULL);
+
     g_ptr_array_add(waiters, g_object_ref(pic));
 }
 
@@ -572,6 +632,10 @@ GtkWidget *ui_create_cover_picture(const char *cover_path, int size) {
     if (cover_exists(cover_path)) {
         GtkWidget *pic = gtk_picture_new();
         gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
+        /* Без can_shrink минимум картинки равен размеру декодированной текстуры,
+         * и этот минимум протекает в раскладку (например, в минимальную высоту
+         * шторки плеера). С ним картинка ужимается до доступного места. */
+        gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
         gtk_widget_set_hexpand(pic, TRUE);
         gtk_widget_set_vexpand(pic, TRUE);
         attach_cover(pic, cover_path, size);
@@ -599,8 +663,13 @@ GdkTexture *ui_create_cover_texture(const char *cover_path, int size) {
         return NULL;
     }
 
+    /* Декодируем под реальный масштаб экрана (виджета нет — берём основной
+     * монитор), чтобы обложка не мылилась на HiDPI. */
+    int target = size * cover_decode_scale(NULL);
+    if (target < 1) target = 1;
+
     GError *err = NULL;
-    GdkPixbuf *pix = gdk_pixbuf_new_from_file_at_scale(cover_path, size, size, TRUE, &err);
+    GdkPixbuf *pix = gdk_pixbuf_new_from_file_at_scale(cover_path, target, target, TRUE, &err);
     if (err) g_error_free(err);
     if (!pix) return NULL;
 

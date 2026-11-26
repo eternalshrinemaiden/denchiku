@@ -3,7 +3,7 @@
 #include "ui_helpers.h"
 #include <gst/gst.h>
 
-#define COVER_SIZE 44            /* обложка в нижнем баре */
+#define COVER_SIZE 64            /* обложка в нижнем баре */
 #define FULL_COVER_SIZE 256      /* обложка полноэкранного плеера (декод ×2) */
 
 /* Размытый фон бара на основе обложки трека. */
@@ -50,6 +50,9 @@ struct _PlayerBar {
     gboolean is_seeking;
     gboolean pointer_down;
     gboolean updating_controls;
+
+    gint64 last_range_ns;   /* последняя заданная длительность ползунка перемотки:
+                             * set_range дёргаем только при её смене, а не 4 раза/с */
 
     int layout_mode;
 };
@@ -115,6 +118,17 @@ static void denchiku_player_bar_root_measure(GtkWidget *widget, GtkOrientation o
      * включается компактный режим, а до этого контент может ужаться. */
     ui_measure_min_width(self->content, orientation, for_size,
                          minimum, natural, min_baseline, nat_baseline);
+
+    /* Бар выделяет контенту высоту с отступами 6 сверху и 8 снизу (см. allocate),
+     * поэтому эти отступы обязаны входить в его собственный минимум/натурал по
+     * вертикали. Иначе AdwBottomSheet даёт бару высоту «как у контента», контенту
+     * достаётся на 14px меньше — и низ бара вместе с элементами управления
+     * обрезается за нижней границей окна. */
+    if (self->bar && self->bar->variant == PLAYER_BAR_VARIANT_BAR &&
+        orientation == GTK_ORIENTATION_VERTICAL) {
+        if (minimum) *minimum += 6 + 8;
+        if (natural) *natural += 6 + 8;
+    }
 }
 
 static void denchiku_player_bar_root_allocate(GtkWidget *widget, int width, int height, int baseline) {
@@ -314,7 +328,12 @@ static gboolean on_progress_tick(gpointer user_data) {
         double dur_sec = (double)dur / (double)GST_SECOND;
         double pos_sec = (double)pos / (double)GST_SECOND;
 
-        gtk_range_set_range(GTK_RANGE(pb->seek_scale), 0.0, dur_sec);
+        /* Диапазон меняется только при смене трека; каждый тик (4 раза/с) задавать
+         * его заново не нужно — это лишняя работа GTK с adjustment'ом. */
+        if (dur != pb->last_range_ns) {
+            gtk_range_set_range(GTK_RANGE(pb->seek_scale), 0.0, dur_sec);
+            pb->last_range_ns = dur;
+        }
         gtk_range_set_value(GTK_RANGE(pb->seek_scale), pos_sec);
 
         char *pos_str = format_time_ns(pos);

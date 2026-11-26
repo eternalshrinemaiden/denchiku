@@ -46,6 +46,12 @@ GtkWidget *track_list_get_widget(TrackList *tl);
  * указатели после пересканирования. NULL очищает список. */
 void track_list_set_tracks(TrackList *tl, GPtrArray *tracks);
 
+/* Инкрементальная синхронизация: как set_tracks, но пересобирает только
+ * изменившиеся строки (общий префикс/суффикс переиспользуются), поэтому не
+ * сбрасывает прокрутку и не пересоздаёт весь список. Используется очередью,
+ * где состав меняется часто. */
+void track_list_sync_tracks(TrackList *tl, GPtrArray *tracks);
+
 /* Подсвечивает играющий трек по uri (NULL — снять подсветку). Обновляет только
  * изменившиеся строки, а не весь список. */
 void track_list_set_playing_uri(TrackList *tl, const char *uri);

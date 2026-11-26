@@ -108,7 +108,9 @@ GtkWidget *queue_view_get_widget(QueueView *qv) {
 }
 
 void queue_view_refresh(QueueView *qv) {
-    track_list_set_tracks(qv->list, player_get_queue(qv->player));
+    /* Инкрементально: пересобираются только изменившиеся строки, прокрутка не
+     * сбрасывается. Состав очереди меняется часто (добавление/удаление/перенос). */
+    track_list_sync_tracks(qv->list, player_get_queue(qv->player));
     track_list_set_playing_index(qv->list, player_get_current_index(qv->player));
 }
 

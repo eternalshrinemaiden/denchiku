@@ -1101,6 +1101,30 @@ GtkWidget *track_list_get_widget(TrackList *tl) {
     return tl->widget;
 }
 
+/* Индекс uri -> позиция в списке строится лениво: он нужен только для подсветки
+ * по uri (медиатека/плейлисты), а очередь подсвечивает по индексу и в нём не
+ * нуждается — не тратим тысячи g_strdup на каждую пересборку очереди.
+ * Значение — индекс + 1, чтобы 0 отличать от «не найдено». */
+static void ensure_uri_index(TrackList *tl) {
+    if (tl->uri_index || !tl->tracks) return;
+    tl->uri_index = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    for (guint i = 0; i < tl->tracks->len; i++) {
+        Track *t = g_ptr_array_index(tl->tracks, i);
+        if (t->uri && !g_hash_table_contains(tl->uri_index, t->uri))
+            g_hash_table_insert(tl->uri_index, g_strdup(t->uri),
+                                GINT_TO_POINTER((gint)i + 1));
+    }
+}
+
+/* Трек элемента модели по его позиции (заимствованный указатель). */
+static Track *store_track_at(TrackList *tl, guint index) {
+    GObject *obj = g_list_model_get_item(G_LIST_MODEL(tl->store), index);
+    if (!obj) return NULL;
+    Track *t = DENCHIKU_TRACK_ITEM(obj)->track;
+    g_object_unref(obj);
+    return t;
+}
+
 void track_list_set_tracks(TrackList *tl, GPtrArray *tracks) {
     if (!tl) return;
 
@@ -1117,18 +1141,6 @@ void track_list_set_tracks(TrackList *tl, GPtrArray *tracks) {
     g_list_store_remove_all(tl->store);
     if (!tracks || tracks->len == 0) return;
 
-    /* Индекс по uri для подсветки играющего трека за O(1): линейный поиск по
-     * всей медиатеке на каждую смену трека не должен зависеть от её размера. */
-    tl->uri_index = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    for (guint i = 0; i < tracks->len; i++) {
-        Track *t = g_ptr_array_index(tracks, i);
-        if (t->uri && !g_hash_table_contains(tl->uri_index, t->uri)) {
-            /* Значение — индекс + 1, чтобы 0 отличать от «не найдено». */
-            g_hash_table_insert(tl->uri_index, g_strdup(t->uri),
-                                GINT_TO_POINTER((gint)i + 1));
-        }
-    }
-
     /* Один splice вместо append на каждый элемент: append дёргает перепривязку
      * вьюх и сортировку заново (квадратичная сложность на больших списках). */
     GPtrArray *items = g_ptr_array_new_with_free_func(g_object_unref);
@@ -1139,9 +1151,56 @@ void track_list_set_tracks(TrackList *tl, GPtrArray *tracks) {
     g_ptr_array_unref(items);
 }
 
+/* Инкрементальная синхронизация с новым содержимым: переиспользует общий префикс
+ * и суффикс строк и пересобирает только изменившийся «серединный» участок.
+ * Порядок модели после вызова совпадает с tracks. Так смена состава очереди не
+ * пересоздаёт все строки и не сбрасывает прокрутку, в отличие от полного
+ * track_list_set_tracks. */
+void track_list_sync_tracks(TrackList *tl, GPtrArray *tracks) {
+    if (!tl) return;
+
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(tl->store));
+    guint m = tracks ? tracks->len : 0;
+
+    guint p = 0;
+    while (p < n && p < m && store_track_at(tl, p) == g_ptr_array_index(tracks, p))
+        p++;
+    guint s = 0;
+    while (s < (n - p) && s < (m - p) &&
+           store_track_at(tl, n - 1 - s) == g_ptr_array_index(tracks, m - 1 - s))
+        s++;
+
+    guint remove_n = n - p - s;
+    guint insert_n = m - p - s;
+
+    /* Снимаем подсветку ДО правок: флаг живёт на элементе, поэтому снимется с
+     * нужной строки, даже если её позиция затем сместится. Повторно подсветит
+     * очередь вызовом track_list_set_playing_index после синхронизации. */
+    if (tl->playing_index >= 0) apply_playing_change(tl, tl->playing_index, FALSE);
+    tl->playing_index = -1;
+    tl->drop_row = NULL;
+
+    if (remove_n > 0 || insert_n > 0) {
+        GPtrArray *items = g_ptr_array_new_with_free_func(g_object_unref);
+        for (guint i = p; i < p + insert_n; i++)
+            g_ptr_array_add(items, track_item_new(g_ptr_array_index(tracks, i)));
+        g_list_store_splice(tl->store, p, remove_n, items->pdata, items->len);
+        g_ptr_array_unref(items);
+    }
+
+    if (tl->tracks) g_ptr_array_unref(tl->tracks);
+    tl->tracks = tracks ? g_ptr_array_ref(tracks) : NULL;
+
+    if (tl->uri_index) {
+        g_hash_table_destroy(tl->uri_index);
+        tl->uri_index = NULL;
+    }
+}
+
 void track_list_set_playing_uri(TrackList *tl, const char *uri) {
     if (!tl) return;
 
+    ensure_uri_index(tl);
     int new_index = -1;
     if (uri && tl->uri_index) {
         gpointer value = g_hash_table_lookup(tl->uri_index, uri);

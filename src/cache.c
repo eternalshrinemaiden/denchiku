@@ -19,11 +19,29 @@ static char *get_cache_filepath(void) {
 
 static GMutex      g_lock;
 static GHashTable *g_tracks;   /* char* uri -> Track* (кэш владеет ссылкой) */
+
+/* Мемоизация INI-текста группы на трек, чтобы при flush пересобирать текст
+ * только у изменившихся треков, а не у всей медиатеки. Актуальность — по
+ * указателю на Track: при изменении в кэш кладётся новый объект, поэтому
+ * отдельная инвалидация не нужна, достаточно чистить записи удалённых uri. */
+typedef struct {
+    const Track *track;
+    char *text;
+} GroupMemo;
+
+static GHashTable *g_group_memo; /* char* uri -> GroupMemo* */
+
 static gboolean    g_loaded;
 static gboolean    g_dirty;
 static guint       g_flush_id; /* id источника отложенной записи (0 — нет) */
 
 static void schedule_flush_locked(void);
+
+static void group_memo_free(gpointer data) {
+    GroupMemo *m = data;
+    g_free(m->text);
+    g_free(m);
+}
 
 /* ===== сериализация =====
  * На диск пишем INI-текст напрямую из таблицы (без промежуточного GKeyFile):
@@ -179,6 +197,8 @@ static void ensure_loaded_locked(void) {
     g_loaded = TRUE;
     g_tracks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
                                      (GDestroyNotify)track_unref);
+    g_group_memo = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                         group_memo_free);
     load_file_locked();
 }
 
@@ -191,8 +211,26 @@ static char *serialize_locked_data(void) {
     GHashTableIter it;
     gpointer key, value;
     g_hash_table_iter_init(&it, g_tracks);
-    while (g_hash_table_iter_next(&it, &key, &value))
-        track_append_ini(out, value);
+    while (g_hash_table_iter_next(&it, &key, &value)) {
+        const char *uri = key;
+        const Track *t = value;
+
+        GroupMemo *m = g_hash_table_lookup(g_group_memo, uri);
+        if (!m) {
+            m = g_new0(GroupMemo, 1);
+            g_hash_table_insert(g_group_memo, g_strdup(uri), m);
+        }
+        /* Тексты неизменившихся треков переиспользуем; пересобираем только те,
+         * у которых сменился объект (значит, поменялись метаданные/паспорт). */
+        if (m->track != t) {
+            g_free(m->text);
+            GString *group = g_string_new(NULL);
+            track_append_ini(group, t);
+            m->text = g_string_free(group, FALSE);
+            m->track = t;
+        }
+        g_string_append(out, m->text);
+    }
     return g_string_free(out, FALSE);
 }
 
@@ -296,6 +334,7 @@ void cache_save_tracks(GPtrArray *tracks) {
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
     g_hash_table_remove_all(g_tracks);
+    g_hash_table_remove_all(g_group_memo);
     if (tracks) {
         for (guint i = 0; i < tracks->len; i++)
             put_track_locked(g_ptr_array_index(tracks, i));
@@ -315,6 +354,7 @@ void cache_remove_uri(const char *uri) {
     if (!uri) return;
     g_mutex_lock(&g_lock);
     ensure_loaded_locked();
+    g_hash_table_remove(g_group_memo, uri);
     if (g_hash_table_remove(g_tracks, uri)) schedule_flush_locked();
     g_mutex_unlock(&g_lock);
 }
@@ -336,6 +376,7 @@ gboolean cache_rename_uri(const char *old_uri, const char *new_uri,
         moved->mtime = mtime;
         moved->size = size;
         g_hash_table_remove(g_tracks, old_uri);
+        g_hash_table_remove(g_group_memo, old_uri);
         g_hash_table_replace(g_tracks, g_strdup(new_uri), moved);
         schedule_flush_locked();
         ok = TRUE;
@@ -378,6 +419,7 @@ void cache_prune_missing(GHashTable *present_uris) {
     g_hash_table_iter_init(&it, g_tracks);
     while (g_hash_table_iter_next(&it, &key, &value)) {
         if (!present_uris || !g_hash_table_contains(present_uris, key)) {
+            g_hash_table_remove(g_group_memo, key);
             g_hash_table_iter_remove(&it);
             changed = TRUE;
         }
