@@ -19,6 +19,11 @@ struct _Player {
     int order_pos;         /* позиция текущего трека в order */
     PlayerRepeatMode repeat;
 
+    /* Громкость храним в самом плеере, а не только в playbin: иначе два
+     * независимых ползунка (бар и развернутый плеер) расходились бы — тот, что
+     * не тянули, читал бы устаревшее значение. */
+    double volume;
+
     guint bus_watch_id;
     /* Бесшовные переходы (gapless): обработчик about-to-finish готовит
      * следующий uri прямо в стриминговом потоке, а состояние и UI обновляются
@@ -212,6 +217,7 @@ Player *player_new(void) {
     p->queue_index = g_hash_table_new(g_direct_hash, g_direct_equal);
     p->current_index = -1;
     p->is_playing = FALSE;
+    p->volume = 1.0;
 
     if (p->playbin) {
         /* Подключение к about-to-finish переводит playbin в режим gapless. */
@@ -614,17 +620,19 @@ void player_seek(Player *p, gint64 position_ns) {
 }
 
 double player_get_volume(Player *p) {
-    double vol = 1.0;
-    if (p->playbin) {
-        g_object_get(p->playbin, "volume", &vol, NULL);
-    }
-    return vol;
+    return p->volume;
 }
 
 void player_set_volume(Player *p, double volume) {
+    double clamped = CLAMP(volume, 0.0, 1.0);
+    if (clamped == p->volume) return;
+    p->volume = clamped;
     if (p->playbin) {
-        g_object_set(p->playbin, "volume", CLAMP(volume, 0.0, 1.0), NULL);
+        g_object_set(p->playbin, "volume", clamped, NULL);
     }
+    /* Уведомляем UI: оба ползунка громкости (бар и развёрнутый плеер) должны
+     * показывать одно и то же значение. */
+    notify_state_changed(p);
 }
 
 GPtrArray *player_get_queue(Player *p) {

@@ -485,6 +485,17 @@ static void on_mobile_breakpoint_apply(AdwBreakpoint *bp, gpointer user_data) {
     adw_overlay_split_view_set_show_sidebar(ws->queue_split_view, FALSE);
 }
 
+/* При сворачивании шторки встроенную панель очереди развёрнутого плеера
+ * закрываем, чтобы она не оставалась открытой при следующем раскрытии. */
+static void on_bottom_sheet_open_changed(GObject *object, GParamSpec *pspec,
+                                         gpointer user_data) {
+    (void)pspec;
+    WindowState *ws = user_data;
+    if (!adw_bottom_sheet_get_open(ADW_BOTTOM_SHEET(object))) {
+        player_bar_close_queue(ws->full_player);
+    }
+}
+
 /* Собирает текущее состояние сессии в s (для сохранения при выходе). */
 static void collect_state(WindowState *ws, AppState *s) {
     GtkWindow *win = GTK_WINDOW(ws->window);
@@ -719,7 +730,7 @@ adw_overlay_split_view_set_pin_sidebar(ws->queue_split_view, TRUE);
 /* Панель скрыта по умолчанию (в т.ч. при пустой очереди на старте). */
 adw_overlay_split_view_set_show_sidebar(ws->queue_split_view, FALSE);
 adw_overlay_split_view_set_content(ws->queue_split_view, GTK_WIDGET(ws->split_view));
-ws->queue_view = queue_view_new(player);
+ws->queue_view = queue_view_new(player, FALSE);
 adw_overlay_split_view_set_sidebar(ws->queue_split_view, queue_view_get_widget(ws->queue_view));
 
 /* На узком окне панель очереди делаем накладной (collapsed). В режиме разделения
@@ -763,15 +774,22 @@ if (queue_btn) {
 
 ws->full_player = player_bar_new(player, PLAYER_BAR_VARIANT_FULLSCREEN);
 adw_bottom_sheet_set_sheet(ws->bottom_sheet, player_bar_get_widget(ws->full_player));
+/* Сворачивание шторки закрывает встроенную панель очереди развёрнутого плеера. */
+g_signal_connect(ws->bottom_sheet, "notify::open",
+                 G_CALLBACK(on_bottom_sheet_open_changed), ws);
 
 /* Шторку можно развернуть тапом по нижнему бару и на десктопе тоже. */
 adw_bottom_sheet_set_can_open(ws->bottom_sheet, TRUE);
 
-/* Плеер переходит в компактный вид ровно тогда же, когда сворачивается сайдбар. */
+/* Плеер переходит в компактный вид ровно тогда же, когда сворачивается сайдбар.
+ * Более широкий бар (650–800px) до компактного вида доводит сам player_bar по
+ * своей ширине — см. player_bar.c: отдельных брейкпоинтов быть не может,
+ * libadwaita применяет сеттеры только текущего (последнего подходящего). */
 GValue mobile_val = G_VALUE_INIT;
 g_value_init(&mobile_val, G_TYPE_BOOLEAN);
 g_value_set_boolean(&mobile_val, TRUE);
-adw_breakpoint_add_setter(bp, G_OBJECT(player_bar_get_widget(ws->player_bar)), "mobile", &mobile_val);
+adw_breakpoint_add_setter(bp, G_OBJECT(player_bar_get_widget(ws->player_bar)),
+                          "mobile", &mobile_val);
 g_value_unset(&mobile_val);
 
 adw_application_window_set_content(win, GTK_WIDGET(ws->bottom_sheet));

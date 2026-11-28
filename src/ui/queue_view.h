@@ -4,7 +4,7 @@
 
 typedef struct _QueueView QueueView;
 
-QueueView *queue_view_new(Player *player);
+QueueView *queue_view_new(Player *player, gboolean embedded);
 GtkWidget *queue_view_get_widget(QueueView *qv);
 /* Полная перестройка строк очереди (состав изменился). */
 void       queue_view_refresh(QueueView *qv);

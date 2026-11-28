@@ -78,6 +78,17 @@ static gboolean restore_session_idle(gpointer data) {
 static void on_activate(AdwApplication *app, gpointer user_data) {
     AppContext *ctx = user_data;
 
+    /* Приложение одноэкземплярное: повторный запуск должен лишь показать уже
+     * открытое окно. Иначе создаётся второе окно, общие глобальные колбэки
+     * (состояние игрока, меню трека) начинают указывать на новое окно, а при
+     * закрытии одного из них остаются висячими — это приводило к обращениям к
+     * освобождённым данным (например, «Child name 'grid' not found in GtkStack»). */
+    GList *windows = gtk_application_get_windows(GTK_APPLICATION(app));
+    if (windows) {
+        gtk_window_present(GTK_WINDOW(windows->data));
+        return;
+    }
+
     /* Иконки-сердечки (контур/закрашенное) лежат в ресурсах приложения. */
     gtk_icon_theme_add_resource_path(
         gtk_icon_theme_get_for_display(gdk_display_get_default()),

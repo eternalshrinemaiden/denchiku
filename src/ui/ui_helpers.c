@@ -562,6 +562,24 @@ static void ensure_round_cover_css(void) {
     g_object_unref(css);
 }
 
+/* Тема рисует у GtkFrame рамку (frame { border: 1px solid }), из-за чего кадр
+ * обложки требует на 2px больше запрошенного размера. Внутри контейнера
+ * фиксированного размера это ужимает картинку и даёт предупреждения «needs at
+ * least …». Гасим рамку: обложка должна занимать ровно size×size. */
+static void ensure_cover_frame_css(void) {
+    static gboolean loaded = FALSE;
+    if (loaded) return;
+    loaded = TRUE;
+
+    GtkCssProvider *css = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(css,
+        ".denchiku-cover { border: none; padding: 0; }");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+                                               GTK_STYLE_PROVIDER(css),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(css);
+}
+
 /* Adwaita задаёт frame { border-radius: 12px }, поэтому у маленьких обложек
  * (очередь, компактный список, плеер-бар) скругление выглядит чрезмерным.
  * Для некруглых обложек подбираем радиус пропорционально размеру (12.5%, но не
@@ -585,8 +603,10 @@ static void ensure_cover_radius_css(int radius) {
 
 static GtkWidget *create_cover_widget(const char *cover_path, int size, gboolean round) {
     cover_loader_init();
+    ensure_cover_frame_css();
 
     GtkWidget *frame = gtk_frame_new(NULL);
+    gtk_widget_add_css_class(frame, "denchiku-cover");
     gtk_widget_set_size_request(frame, size, size);
     gtk_widget_set_halign(frame, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(frame, GTK_ALIGN_CENTER);

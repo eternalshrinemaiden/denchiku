@@ -1,4 +1,5 @@
 #include "player_bar.h"
+#include "queue_view.h"
 #include "track.h"
 #include "ui_helpers.h"
 #include <gst/gst.h>
@@ -44,7 +45,11 @@ struct _PlayerBar {
 
     GtkScale *volume_scale;
 
-    GtkWidget *queue_btn;     /* BAR: переключатель боковой панели очереди */
+    GtkWidget *queue_btn;     /* переключатель панели очереди: в баре — боковая
+                               * панель окна, в развёрнутом плеере — подмена
+                               * содержимого плеера на очередь */
+    GtkWidget *stack;         /* FULLSCREEN: «сейчас играет» либо очередь */
+    QueueView *queue_view;    /* FULLSCREEN: встроенная панель очереди */
 
     guint timer_id;
     gboolean is_seeking;
@@ -55,9 +60,48 @@ struct _PlayerBar {
                              * set_range дёргаем только при её смене, а не 4 раза/с */
 
     int layout_mode;
+    gboolean mobile_requested;  /* брейкпоинт запросил компактный вид */
+    int alloc_width;            /* последняя выделенная ширина (0 — ещё неизвестна) */
+    guint mode_idle_id;         /* отложенное переключение раскладки */
 };
 
+/* Минимальная ширина, при которой широкий бар из трёх колонок ещё помещается:
+ * минимум GtkGrid ~768px (три колонки по ~248px) плюс боковые отступы контента
+ * 2×16px. Ниже — только компактный вид, иначе GTK измеряет сетку на ширине
+ * меньше её минимума («needs at least …») и колонка с обложкой обрезается. */
+#define PLAYER_BAR_WIDE_MIN_WIDTH 800
+
 static void apply_mode(PlayerBar *pb, LayoutMode mode);
+
+/* Переключает раскладку. */
+static void player_bar_apply_mode(PlayerBar *pb, LayoutMode mode) {
+    if ((int)mode == pb->layout_mode) return;
+    pb->layout_mode = mode;
+    apply_mode(pb, mode);
+}
+
+/* Компактный вид, если его запросил брейкпоинт (узкое окно) или фактическая
+ * ширина бара меньше минимума широкой раскладки. Пока ширина неизвестна,
+ * остаёмся в компактном виде — он безопасен на любой ширине. */
+static void player_bar_update_mode(PlayerBar *pb) {
+    if (pb->variant != PLAYER_BAR_VARIANT_BAR) return;
+    gboolean compact = pb->mobile_requested ||
+                       pb->alloc_width < PLAYER_BAR_WIDE_MIN_WIDTH;
+    player_bar_apply_mode(pb, compact ? LAYOUT_COMPACT : LAYOUT_WIDE);
+}
+
+static gboolean player_bar_mode_idle(gpointer data) {
+    PlayerBar *pb = data;
+    pb->mode_idle_id = 0;
+    player_bar_update_mode(pb);
+    return G_SOURCE_REMOVE;
+}
+
+/* Раскладку меняем отложенно: из measure/allocate (и во время применения
+ * брейкпоинта в window's allocate) немедленный queue_resize игнорируется. */
+static void player_bar_schedule_mode(PlayerBar *pb) {
+    if (pb->mode_idle_id == 0) pb->mode_idle_id = g_idle_add(player_bar_mode_idle, pb);
+}
 
 /* Корневой контейнер бара. GtkWidget в GTK4 вызывает size_allocate только
  * когда у виджета НЕТ менеджера компоновки, поэтому реагируем на ресайз через
@@ -86,7 +130,11 @@ static void denchiku_player_bar_root_get_property(GObject *object, guint prop_id
     DenchikuPlayerBarRoot *self = DENCHIKU_PLAYER_BAR_ROOT(object);
     switch (prop_id) {
     case ROOT_PROP_MOBILE:
-        g_value_set_boolean(value, self->bar && self->bar->layout_mode == LAYOUT_COMPACT);
+        /* Значение свойства — «запрошен ли компактный вид брейкпоинтом».
+         * Фактическая раскладка может быть компактной и без запроса (по ширине),
+         * поэтому геттер не читает layout_mode: иначе брейкпоинт запомнил бы
+         * исходное значение TRUE и не снял компакт при расширении окна. */
+        g_value_set_boolean(value, self->bar && self->bar->mobile_requested);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -98,12 +146,12 @@ static void denchiku_player_bar_root_set_property(GObject *object, guint prop_id
     switch (prop_id) {
     case ROOT_PROP_MOBILE:
         if (self->bar && self->bar->variant == PLAYER_BAR_VARIANT_BAR) {
-            LayoutMode mode = g_value_get_boolean(value) ? LAYOUT_COMPACT : LAYOUT_WIDE;
-            if ((int)mode != self->bar->layout_mode) {
-                self->bar->layout_mode = mode;
-                apply_mode(self->bar, mode);
+            gboolean requested = g_value_get_boolean(value);
+            if (self->bar->mobile_requested != requested) {
+                self->bar->mobile_requested = requested;
                 g_object_notify_by_pspec(object, root_props[ROOT_PROP_MOBILE]);
             }
+            player_bar_schedule_mode(self->bar);
         }
         break;
     default:
@@ -111,13 +159,42 @@ static void denchiku_player_bar_root_set_property(GObject *object, guint prop_id
     }
 }
 
-static void denchiku_player_bar_root_measure(GtkWidget *widget, GtkOrientation orientation, int for_size,
-                                          int *minimum, int *natural, int *min_baseline, int *nat_baseline) {
+static void denchiku_player_bar_root_measure(GtkWidget *widget, GtkOrientation orientation,
+                                          int for_size, int *minimum, int *natural, int *min_baseline, int *nat_baseline) {
     DenchikuPlayerBarRoot *self = DENCHIKU_PLAYER_BAR_ROOT(widget);
+
+    /* Широкий бар из трёх колонок требует ~800px; в узком окне он обязан быть
+     * компактным, но брейкпоинт применяется на этапе allocate — уже после
+     * измерения. Если в переходный кадр for_size меньше минимума контента в
+     * противоположной ориентации, GTK ругается «needs at least …». Поднимаем
+     * for_size до этого минимума, чтобы не засорять лог: контент всё равно
+     * переедет в компактную раскладку. */
+    if (for_size >= 0 && self->content &&
+        self->bar && self->bar->variant == PLAYER_BAR_VARIANT_BAR) {
+        GtkOrientation opposite = (orientation == GTK_ORIENTATION_HORIZONTAL)
+                                      ? GTK_ORIENTATION_VERTICAL
+                                      : GTK_ORIENTATION_HORIZONTAL;
+        int content_min_opposite = 0;
+        gtk_widget_measure(self->content, opposite, -1, &content_min_opposite,
+                           NULL, NULL, NULL);
+        if (for_size < content_min_opposite) for_size = content_min_opposite;
+    }
+
     /* Бар/шторка не должны задавать минимальную ширину окна: на узкой ширине
      * включается компактный режим, а до этого контент может ужаться. */
     ui_measure_min_width(self->content, orientation, for_size,
                          minimum, natural, min_baseline, nat_baseline);
+
+    /* Развёрнутый плеер — фиксированная высота ~80% окна: не зависит от
+     * содержимого (обложка/очередь) и не «прыгает» при переключении страниц.
+     * Минимум оставляем маленьким (см. выше), чтобы шторка ужималась на низком
+     * окне; натуральную задаём сами, а содержимое при нехватке места прокручивается. */
+    if (self->bar && self->bar->variant == PLAYER_BAR_VARIANT_FULLSCREEN &&
+        orientation == GTK_ORIENTATION_VERTICAL && natural) {
+        GtkRoot *root = gtk_widget_get_root(widget);
+        int root_h = GTK_IS_WIDGET(root) ? gtk_widget_get_height(GTK_WIDGET(root)) : 0;
+        if (root_h > 0) *natural = root_h * 80 / 100;
+    }
 
     /* Бар выделяет контенту высоту с отступами 6 сверху и 8 снизу (см. allocate),
      * поэтому эти отступы обязаны входить в его собственный минимум/натурал по
@@ -138,6 +215,13 @@ static void denchiku_player_bar_root_allocate(GtkWidget *widget, int width, int 
     gboolean is_bar = self->bar && self->bar->variant == PLAYER_BAR_VARIANT_BAR;
 
     if (is_bar) {
+        /* Запоминаем ширину и решаем раскладку по ней: широкий бар требует
+         * ~800px, а брейкпоинт переключает только на 650sp. */
+        if (self->bar->alloc_width != width) {
+            self->bar->alloc_width = width;
+            player_bar_schedule_mode(self->bar);
+        }
+
         int inset = (self->bar->layout_mode == LAYOUT_WIDE) ? 16 : 8;
         int w = MAX(width - 2 * inset, 0);
         int h = MAX(height - 6 - 8, 0);
@@ -265,6 +349,8 @@ static void on_repeat_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_volume_changed(GtkRange *range, gpointer user_data) {
     PlayerBar *pb = user_data;
+    /* Игнорируем программную синхронизацию ползунка (см. player_bar_refresh). */
+    if (pb->updating_controls) return;
     player_set_volume(pb->player, gtk_range_get_value(range));
 }
 
@@ -574,6 +660,15 @@ static GtkWidget *build_bar_content(PlayerBar *pb) {
 
 /* ===================== полноэкранный плеер ===================== */
 
+/* Переключает содержимое развёрнутого плеера между «сейчас играет» и очередью.
+ * Громкость и сама кнопка очереди находятся вне стека и остаются на месте. */
+static void on_fullscreen_queue_toggled(GtkToggleButton *btn, gpointer user_data) {
+    PlayerBar *pb = user_data;
+    if (!pb->stack) return;
+    gtk_stack_set_visible_child_name(GTK_STACK(pb->stack),
+        gtk_toggle_button_get_active(btn) ? "queue" : "playing");
+}
+
 static GtkWidget *build_fullscreen_content(PlayerBar *pb) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_margin_top(box, 34);   /* под ручку-«драгхэндл» */
@@ -581,11 +676,14 @@ static GtkWidget *build_fullscreen_content(PlayerBar *pb) {
     gtk_widget_set_margin_start(box, 18);
     gtk_widget_set_margin_end(box, 18);
 
+    /* Страница «сейчас играет». */
+    GtkWidget *playing = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+
     /* Большая обложка занимает всё доступное место. */
     pb->cover_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_hexpand(pb->cover_box, TRUE);
     gtk_widget_set_vexpand(pb->cover_box, TRUE);
-    gtk_box_append(GTK_BOX(box), pb->cover_box);
+    gtk_box_append(GTK_BOX(playing), pb->cover_box);
 
     pb->title_label = GTK_LABEL(gtk_label_new(""));
     gtk_widget_add_css_class(GTK_WIDGET(pb->title_label), "title-3");
@@ -595,29 +693,75 @@ static GtkWidget *build_fullscreen_content(PlayerBar *pb) {
     gtk_label_set_lines(pb->title_label, 2);
     /* Небольшой отступ между обложкой и названием трека. */
     gtk_widget_set_margin_top(GTK_WIDGET(pb->title_label), 12);
-    gtk_box_append(GTK_BOX(box), GTK_WIDGET(pb->title_label));
+    gtk_box_append(GTK_BOX(playing), GTK_WIDGET(pb->title_label));
 
     pb->artist_label = GTK_LABEL(gtk_label_new(""));
     gtk_widget_add_css_class(GTK_WIDGET(pb->artist_label), "dim-label");
     gtk_label_set_xalign(pb->artist_label, 0.5);
     gtk_label_set_ellipsize(pb->artist_label, PANGO_ELLIPSIZE_END);
-    gtk_box_append(GTK_BOX(box), GTK_WIDGET(pb->artist_label));
+    gtk_box_append(GTK_BOX(playing), GTK_WIDGET(pb->artist_label));
 
-    gtk_box_append(GTK_BOX(box), build_seek_row(pb));
-    gtk_box_append(GTK_BOX(box), build_controls_row(pb, 24, 88));
+    /* Кнопки «сердечко» и «меню трека» — под исполнителем, по центру. */
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_halign(actions, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(actions, GTK_ALIGN_CENTER);
 
-    build_volume_row(pb, 220);
-    gtk_widget_set_halign(pb->volume_box, GTK_ALIGN_CENTER);
-    gtk_box_append(GTK_BOX(box), pb->volume_box);
+    pb->favorite_btn = track_favorite_button_new(NULL);
+    gtk_widget_set_visible(pb->favorite_btn, FALSE);
 
-    /* Прокрутка с propagate-natural-height: минимальная высота маленькая (шторка
-     * ужимается на низком окне), а натуральная — по содержимому (раскрытие почти
-     * на весь экран на высоком). */
+    pb->title_menu_btn = track_menu_button_new();
+    gtk_widget_set_visible(pb->title_menu_btn, FALSE);
+    gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(pb->title_menu_btn),
+                                          create_playerbar_popup, pb, NULL);
+
+    gtk_box_append(GTK_BOX(actions), pb->favorite_btn);
+    gtk_box_append(GTK_BOX(actions), pb->title_menu_btn);
+    gtk_box_append(GTK_BOX(playing), actions);
+
+    GtkWidget *seek = build_seek_row(pb);
+    gtk_box_append(GTK_BOX(playing), seek);
+
+    GtkWidget *controls = build_controls_row(pb, 24, 88);
+    gtk_box_append(GTK_BOX(playing), controls);
+
+    /* Прокрутка: высоту шторки задаёт корневой контейнер (фиксированные ~80%
+     * окна, см. denchiku_player_bar_root_measure), а здесь лишь включаем
+     * вертикальную прокрутку содержимого, если оно не влезло. */
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
-    return scroll;
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), playing);
+
+    /* Очередь подменяет собой содержимое плеера. Размер стека — по видимой
+     * странице (не «по самой большой»), иначе очередь задавала бы минимум высоты
+     * и на низком окне шторка не ужималась бы. */
+    pb->queue_view = queue_view_new(pb->player, TRUE);
+    pb->stack = gtk_stack_new();
+    gtk_stack_set_vhomogeneous(GTK_STACK(pb->stack), FALSE);
+    gtk_stack_set_hhomogeneous(GTK_STACK(pb->stack), FALSE);
+    gtk_stack_add_named(GTK_STACK(pb->stack), scroll, "playing");
+    gtk_stack_add_named(GTK_STACK(pb->stack), queue_view_get_widget(pb->queue_view), "queue");
+    gtk_widget_set_hexpand(pb->stack, TRUE);
+    gtk_widget_set_vexpand(pb->stack, TRUE);
+    gtk_stack_set_visible_child_name(GTK_STACK(pb->stack), "playing");
+    gtk_box_append(GTK_BOX(box), pb->stack);
+
+    /* Громкость и кнопка очереди остаются на месте на обеих страницах. */
+    build_volume_row(pb, 220);
+    gtk_widget_set_halign(pb->volume_box, GTK_ALIGN_CENTER);
+
+    pb->queue_btn = gtk_toggle_button_new();
+    gtk_button_set_icon_name(GTK_BUTTON(pb->queue_btn), "view-list-symbolic");
+    gtk_widget_set_tooltip_text(pb->queue_btn, "Очередь");
+    gtk_widget_add_css_class(pb->queue_btn, "flat");
+    gtk_widget_set_valign(pb->queue_btn, GTK_ALIGN_CENTER);
+    g_signal_connect(pb->queue_btn, "toggled",
+                     G_CALLBACK(on_fullscreen_queue_toggled), pb);
+    gtk_box_append(GTK_BOX(pb->volume_box), pb->queue_btn);
+
+    gtk_box_append(GTK_BOX(box), pb->volume_box);
+
+    return box;
 }
 
 /* ===================== общее ===================== */
@@ -667,8 +811,13 @@ PlayerBar *player_bar_new(Player *player, PlayerBarVariant variant) {
     pb->widget = GTK_WIDGET(root);
 
     if (variant == PLAYER_BAR_VARIANT_BAR) {
-        apply_mode(pb, LAYOUT_WIDE);
-        pb->layout_mode = LAYOUT_WIDE;
+        /* Стартуем в компактном виде: он безопасен на любой ширине и не даёт
+         * сетке широкого бара измеряться на ширине меньше минимума до того, как
+         * станет известна реальная ширина (затем layout подстроится в idle). */
+        pb->mobile_requested = FALSE;
+        pb->alloc_width = 0;
+        apply_mode(pb, LAYOUT_COMPACT);
+        pb->layout_mode = LAYOUT_COMPACT;
         /* Бар показывается только когда есть что играть. */
         gtk_widget_set_visible(pb->widget, FALSE);
     }
@@ -683,6 +832,14 @@ GtkWidget *player_bar_get_widget(PlayerBar *pb) {
 
 GtkWidget *player_bar_get_queue_button(PlayerBar *pb) {
     return pb->queue_btn;
+}
+
+/* Возвращает развёрнутый плеер со страницы очереди к «сейчас играет»
+ * (например, при сворачивании шторки). */
+void player_bar_close_queue(PlayerBar *pb) {
+    if (pb && pb->queue_btn && pb->stack) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pb->queue_btn), FALSE);
+    }
 }
 
 
@@ -730,6 +887,30 @@ void player_bar_refresh(PlayerBar *pb) {
 
     update_track_menu(pb);
 
+    /* Громкость хранит плеер; синхронизируем ползунок, чтобы бар и развёрнутый
+     * плеер всегда показывали один уровень. Флаг гасит обработчик value-changed,
+     * иначе программная установка снова вызвала бы player_set_volume. */
+    if (pb->volume_scale) {
+        pb->updating_controls = TRUE;
+        gtk_range_set_value(GTK_RANGE(pb->volume_scale), player_get_volume(pb->player));
+        pb->updating_controls = FALSE;
+    }
+
+    /* Встроенная панель очереди развёрнутого плеера. */
+    if (pb->queue_view) {
+        queue_view_refresh(pb->queue_view);
+    }
+
+    /* Пустая очередь — возвращаемся к странице «сейчас играет»: смотреть в
+     * пустой список нечего. */
+    if (pb->stack) {
+        GPtrArray *queue = player_get_queue(pb->player);
+        if ((!queue || queue->len == 0) &&
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(pb->queue_btn))) {
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pb->queue_btn), FALSE);
+        }
+    }
+
     Track *cur = player_get_current_track(pb->player);
     if (cur) {
         char *markup = g_markup_printf_escaped("<b>%s</b>", cur->title);
@@ -760,6 +941,12 @@ void player_bar_free(PlayerBar *pb) {
     if (!pb) return;
     if (pb->timer_id > 0) {
         g_source_remove(pb->timer_id);
+    }
+    if (pb->mode_idle_id > 0) {
+        g_source_remove(pb->mode_idle_id);
+    }
+    if (pb->queue_view) {
+        queue_view_free(pb->queue_view);
     }
     g_free(pb->cover_path);
     g_free(pb);

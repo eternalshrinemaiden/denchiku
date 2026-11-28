@@ -11,8 +11,10 @@ typedef enum {
 
 PlayerBar *player_bar_new(Player *player, PlayerBarVariant variant);
 GtkWidget *player_bar_get_widget(PlayerBar *pb);
-/* Кнопка-переключатель очереди (правее ползунка громкости); NULL для
- * полноэкранного варианта. */
+/* Кнопка-переключатель очереди (правее ползунка громкости). В баре управляет
+ * боковой панелью окна, в развёрнутом плеере — встроенной панелью очереди. */
 GtkWidget *player_bar_get_queue_button(PlayerBar *pb);
+/* Закрывает встроенную панель очереди развёрнутого плеера. */
+void       player_bar_close_queue(PlayerBar *pb);
 void       player_bar_refresh(PlayerBar *pb);
 void       player_bar_free(PlayerBar *pb);

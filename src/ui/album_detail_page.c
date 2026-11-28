@@ -332,51 +332,72 @@ static void on_album_track_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
     player_set_queue_and_play(player, tracks, index);
 }
 
-/* Квадрат 320x320, внутри которого обложка вписывается без искажений и не растягивает контейнер */
+/* Контейнер обложки на странице альбома. Пропорцию держит GtkAspectFrame в
+ * режиме obey_child: карточка повторяет пропорции самой обложки (неквадратные
+ * обложки остаются неквадратными, квадратные — квадратными). Фон-«карточка»
+ * лежит на ребёнке aspect-рамки, поэтому тоже повторяет её пропорции. */
 static GtkWidget *create_fixed_cover_box(const char *cover_path) {
     const int box_size = 320;
 
+    GtkWidget *aspect = gtk_aspect_frame_new(0.5f, 0.5f, 1.0f, TRUE);
+    /* Минимум задаёт картинка (см. ниже): большая сторона = box_size. Строка
+     * шапки — горизонтальный GtkBox и при длинном названии ужимает колонку
+     * обложки; без минимума обложка сжималась до нуля. */
+    gtk_widget_set_halign(aspect, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(aspect, GTK_ALIGN_CENTER);
+    gtk_widget_set_hexpand(aspect, FALSE);
+    gtk_widget_set_vexpand(aspect, FALSE);
+
+    /* Фон-«карточка»: aspect-рамка выделяет его ребёнку область с пропорциями
+     * обложки, а overflow:hidden обрезает картинку по скруглённым углам. */
     GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    /* Минимальная ширина обложки — 0 (иначе она раздувает минимальную ширину
-     * страницы альбома и на узком окне AdwOverlaySplitView уходит в минус), но
-     * минимальная высота сохранена, чтобы контейнер не сплющивал шапку. */
-    gtk_widget_set_size_request(card, 0, box_size);
-    gtk_widget_set_halign(card, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(card, GTK_ALIGN_CENTER);
-    gtk_widget_set_hexpand(card, FALSE);
-    gtk_widget_set_vexpand(card, FALSE);
     gtk_widget_set_overflow(card, GTK_OVERFLOW_HIDDEN);
     gtk_widget_add_css_class(card, "card");
+    gtk_aspect_frame_set_child(GTK_ASPECT_FRAME(aspect), card);
 
-    /* Обложку декодируем сразу до box_size, а минимальную ширину не задаём:
-     * GtkPicture с can_shrink имеет минимум 0, а натуральный размер (box_size)
-     * сохраняется. Большой минимум обложки раздувал минимальную ширину страницы
-     * альбома и заставлял AdwOverlaySplitView уходить в отрицательные размеры на
-     * узком окне. */
+    /* Обложку декодируем до box_size с сохранением пропорций: натуральный размер
+     * картинки задаёт пропорцию кадра. Минимум задаём так, чтобы большая сторона
+     * была ровно box_size: иначе строка шапки ужимает обложку (вплоть до нуля на
+     * узком окне), и она выглядит мелкой/пропадает. */
     GdkTexture *tex = cover_path ? ui_create_cover_texture(cover_path, box_size) : NULL;
     if (tex) {
-        GtkWidget *aspect = gtk_aspect_frame_new(0.5f, 0.5f, 1.0f, FALSE);
+        int tw = gdk_texture_get_width(tex);
+        int th = gdk_texture_get_height(tex);
 
         GtkWidget *pic = gtk_picture_new_for_paintable(GDK_PAINTABLE(tex));
         g_object_unref(tex);
 
         gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_CONTAIN);
         gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
+        gtk_widget_set_hexpand(pic, TRUE);
+        gtk_widget_set_vexpand(pic, TRUE);
 
-        gtk_aspect_frame_set_child(GTK_ASPECT_FRAME(aspect), pic);
-        gtk_box_append(GTK_BOX(card), aspect);
-        return card;
+        if (tw > 0 && th > 0) {
+            if (tw >= th) {
+                gtk_widget_set_size_request(pic, box_size,
+                                            MAX(1, (int)((gint64)box_size * th / tw)));
+            } else {
+                gtk_widget_set_size_request(pic,
+                                            MAX(1, (int)((gint64)box_size * tw / th)),
+                                            box_size);
+            }
+        }
+
+        gtk_box_append(GTK_BOX(card), pic);
+        return aspect;
     }
 
-    gtk_widget_set_size_request(card, box_size, box_size);
+    /* Без обложки пропорцию задать нечем — держим квадрат box_size с иконкой. */
+    gtk_widget_set_size_request(aspect, box_size, box_size);
     GtkWidget *icon = gtk_image_new_from_icon_name("media-optical-cd-audio-symbolic");
     gtk_image_set_pixel_size(GTK_IMAGE(icon), 96);
+    gtk_widget_set_halign(icon, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
     gtk_widget_set_vexpand(icon, TRUE);
     gtk_widget_add_css_class(icon, "dim-label");
     gtk_box_append(GTK_BOX(card), icon);
 
-    return card;
+    return aspect;
 }
 
 static void apply_hero_layout(AlbumHeroLayout *hl, gboolean narrow) {

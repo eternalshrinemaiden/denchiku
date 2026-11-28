@@ -67,7 +67,7 @@ static void on_clear_queue(GtkButton *btn, gpointer user_data) {
     player_clear_queue(qv->player);
 }
 
-QueueView *queue_view_new(Player *player) {
+QueueView *queue_view_new(Player *player, gboolean embedded) {
     QueueView *qv = g_new0(QueueView, 1);
     qv->player = player;
     ensure_queue_css();
@@ -87,7 +87,11 @@ QueueView *queue_view_new(Player *player) {
     adw_header_bar_set_show_start_title_buttons(hb, FALSE);
     adw_header_bar_set_title_widget(hb, GTK_WIDGET(adw_window_title_new("Очередь", NULL)));
     /* Панель стоит у правого края окна, поэтому AdwHeaderBar сам покажет
-     * нативную кнопку закрытия окна в конце заголовка. */
+     * нативную кнопку закрытия окна в конце заголовка. Во встроенной панели
+     * (внутри развёрнутого плеера) системные кнопки окна не нужны. */
+    if (embedded) {
+        adw_header_bar_set_show_end_title_buttons(hb, FALSE);
+    }
 
     GtkWidget *clear_btn = gtk_button_new_from_icon_name("edit-clear-all-symbolic");
     gtk_widget_add_css_class(clear_btn, "flat");
