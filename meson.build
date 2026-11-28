@@ -28,6 +28,7 @@ sources = files(
   'src/scanner.c',
   'src/watcher.c',
   'src/playlist.c',
+  'src/favorites.c',
   'src/player.c',
   'src/state.c',
   'src/settings.c',

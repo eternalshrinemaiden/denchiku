@@ -46,6 +46,11 @@ GtkWidget *ui_create_play_shuffle_group(GtkWidget **out_play_btn,
 GtkWidget *ui_create_cover_widget(const char *cover_path, int size);
 /* То же, но с обрезкой по кругу (обложки исполнителей). */
 GtkWidget *ui_create_round_cover_widget(const char *cover_path, int size);
+/* Обложка с оверлеем для карточек альбомов/исполнителей: при наведении обложка
+ * затемняется и проявляется кнопка heart (переданная вызывающим). round — круглая
+ * обрезка. Если heart == NULL, возвращается обычная обложка без оверлея. */
+GtkWidget *ui_create_cover_with_heart(const char *cover_path, int size,
+                                      gboolean round, GtkWidget *heart);
 /* Вешает на произвольный контейнер с обложкой стиль круглой обрезки. */
 void       ui_make_cover_round(GtkWidget *widget);
 

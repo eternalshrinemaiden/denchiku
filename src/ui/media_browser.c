@@ -19,6 +19,7 @@ struct _MediaBrowser {
     GtkColumnViewColumn *col_title;
     GtkColumnViewColumn *col_sub;
     GtkColumnViewColumn *col_year;
+    GtkColumnViewColumn *col_heart;
 
     gboolean syncing_sort;
 };
@@ -153,10 +154,12 @@ static void on_grid_bind(GtkListItemFactory *f, GtkListItem *li, gpointer d) {
     const char *cov = mb->cfg.get_cover_path ? mb->cfg.get_cover_path(item) : NULL;
     GtkWidget *old = gtk_widget_get_first_child(cover_slot);
     if (old) { ui_detach_cover(old); gtk_box_remove(GTK_BOX(cover_slot), old); }
+    /* Сердце строим на каждую привязку: строки переиспользуются, а пометка
+     * «любимое» относится к конкретному элементу. */
+    GtkWidget *heart = mb->cfg.make_heart ? mb->cfg.make_heart(item) : NULL;
     gtk_box_append(GTK_BOX(cover_slot),
-                   mb->cfg.round_covers
-                       ? ui_create_round_cover_widget(cov, cover_size)
-                       : ui_create_cover_widget(cov, cover_size));
+                   ui_create_cover_with_heart(cov, cover_size,
+                                              mb->cfg.round_covers, heart));
 
     const char *title = mb->cfg.get_title ? mb->cfg.get_title(item) : "";
     gtk_label_set_text(GTK_LABEL(title_lbl), title);
@@ -245,6 +248,25 @@ static void on_col_year_bind(GtkListItemFactory *f, GtkListItem *li, gpointer d)
     gtk_widget_add_css_class(lbl, "dim-label");
 }
 
+static void on_col_heart_setup(GtkListItemFactory *f, GtkListItem *li, gpointer d) {
+    (void)f; (void)d;
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_halign(box, GTK_ALIGN_END);
+    gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+    gtk_list_item_set_child(li, box);
+}
+
+static void on_col_heart_bind(GtkListItemFactory *f, GtkListItem *li, gpointer d) {
+    (void)f;
+    MediaBrowser *mb = d;
+    GObject *item = gtk_list_item_get_item(li);
+    GtkWidget *box = gtk_list_item_get_child(li);
+    GtkWidget *old = gtk_widget_get_first_child(box);
+    if (old) gtk_box_remove(GTK_BOX(box), old);
+    GtkWidget *heart = mb->cfg.make_heart ? mb->cfg.make_heart(item) : NULL;
+    if (heart) gtk_box_append(GTK_BOX(box), heart);
+}
+
 static void on_col_activate(GtkColumnView *cv, guint pos, gpointer d) {
     MediaBrowser *mb = d;
     GListModel *model = G_LIST_MODEL(gtk_column_view_get_model(cv));
@@ -314,6 +336,16 @@ MediaBrowser *media_browser_new(GListStore *store,
         gtk_column_view_column_set_sorter(mb->col_year, s_yr);
         g_object_unref(s_yr);
         gtk_column_view_append_column(mb->col_view, mb->col_year);
+    }
+
+    /* Колонка-«сердце» в режиме списка (в сетке сердце лежит на обложке). */
+    if (mb->cfg.make_heart) {
+        GtkListItemFactory *f_heart = gtk_signal_list_item_factory_new();
+        g_signal_connect(f_heart, "setup", G_CALLBACK(on_col_heart_setup), NULL);
+        g_signal_connect(f_heart, "bind", G_CALLBACK(on_col_heart_bind), mb);
+        mb->col_heart = gtk_column_view_column_new("", f_heart);
+        gtk_column_view_column_set_fixed_width(mb->col_heart, 48);
+        gtk_column_view_append_column(mb->col_view, mb->col_heart);
     }
 
     /* Сортер таблицы становится сортером общей модели — сетка и список
@@ -394,6 +426,7 @@ void media_browser_free(MediaBrowser *mb) {
     if (mb->col_title) g_object_unref(mb->col_title);
     if (mb->col_sub) g_object_unref(mb->col_sub);
     if (mb->col_year) g_object_unref(mb->col_year);
+    if (mb->col_heart) g_object_unref(mb->col_heart);
     if (mb->sort_model) g_object_unref(mb->sort_model);
     if (mb->store) g_object_unref(mb->store);
     g_free(mb);

@@ -8,6 +8,8 @@ typedef struct _MediaBrowser MediaBrowser;
 typedef const char *(*MediaItemTextFn)(GObject *item);
 typedef guint       (*MediaItemYearFn)(GObject *item);
 typedef void        (*MediaItemActivatedFn)(GObject *item, gpointer user_data);
+/* Строит кнопку-«сердце» (любимое) для элемента карточки. */
+typedef GtkWidget  *(*MediaItemHeartFn)(GObject *item);
 
 typedef struct {
     const char *title_col_name;
@@ -18,6 +20,9 @@ typedef struct {
     MediaItemTextFn get_subtitle;   /* Может быть NULL (например, для жанров) */
     MediaItemTextFn get_cover_path;
     MediaItemYearFn get_year;       /* Может быть NULL */
+
+    /* Кнопка-«сердце» на карточке. NULL — карточки без пометки «любимое». */
+    MediaItemHeartFn make_heart;
 
     /* Обрезать обложки по кругу (исполнители). */
     gboolean round_covers;

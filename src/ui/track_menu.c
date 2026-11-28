@@ -1,5 +1,7 @@
 #include "track_menu.h"
 
+#include "favorites.h"
+
 /* Состояние, привязанное к конкретному меню: над каким треком и в каком
  * проигрывателе выполняются действия. */
 typedef struct {
@@ -73,14 +75,30 @@ static void ensure_favorite_css(void) {
     g_object_unref(css);
 }
 
-static void update_favorite_button(GtkWidget *btn) {
-    const char *uri = g_object_get_data(G_OBJECT(btn), "fav-uri");
-    gboolean favorite = FALSE;
-    if (uri && playlist_is_favorite_cb) {
-        favorite = playlist_is_favorite_cb(uri, playlist_cb_data);
-    }
+/* Виды «сердечек»: трек (в «Любимых треках»), альбом и исполнитель (пометка
+ * сущности в модуле favorites, как в Spotify). */
+enum { FAV_TRACK, FAV_ALBUM, FAV_ARTIST };
 
-    gtk_widget_set_sensitive(btn, uri != NULL);
+static gboolean favorite_is_active(GtkWidget *btn) {
+    int kind = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "fav-kind"));
+    if (kind == FAV_ALBUM) {
+        return favorites_album_is_liked(g_object_get_data(G_OBJECT(btn), "fav-album"),
+                                        g_object_get_data(G_OBJECT(btn), "fav-album-artist"));
+    }
+    if (kind == FAV_ARTIST) {
+        return favorites_artist_is_liked(g_object_get_data(G_OBJECT(btn), "fav-artist"));
+    }
+    const char *uri = g_object_get_data(G_OBJECT(btn), "fav-uri");
+    return uri && playlist_is_favorite_cb && playlist_is_favorite_cb(uri, playlist_cb_data);
+}
+
+static void update_favorite_button(GtkWidget *btn) {
+    int kind = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "fav-kind"));
+    gboolean favorite = favorite_is_active(btn);
+
+    /* Для трека кнопка активна только когда известен URI. */
+    gtk_widget_set_sensitive(btn, kind != FAV_TRACK ||
+                                  g_object_get_data(G_OBJECT(btn), "fav-uri") != NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), favorite);
     /* Закрашенное красное сердечко для «Любимых», контурное — для остальных. */
     gtk_button_set_icon_name(GTK_BUTTON(btn),
@@ -101,18 +119,29 @@ static void on_fav_button_destroyed(gpointer data, GObject *where) {
 
 static void on_favorite_button_clicked(GtkButton *btn, gpointer user_data) {
     (void)user_data;
-    const char *uri = g_object_get_data(G_OBJECT(btn), "fav-uri");
-    if (!uri) return;
-
+    int kind = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "fav-kind"));
     gboolean desired = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(btn));
 
     /* Обработчик может перестроить списки и уничтожить эту кнопку (например,
-     * при показе «Любимых треков»), поэтому держим ссылку на время вызова. */
+     * при показе «Любимых треков» или перестройке полки «Любимые»), поэтому
+     * держим ссылку на время вызова. */
     g_object_ref(btn);
-    if (playlist_toggle_favorite_cb) {
-        playlist_toggle_favorite_cb(uri, desired, playlist_cb_data);
+    if (kind == FAV_ALBUM) {
+        favorites_album_set_liked(g_object_get_data(G_OBJECT(btn), "fav-album"),
+                                  g_object_get_data(G_OBJECT(btn), "fav-album-artist"),
+                                  desired);
+        /* Могли измениться полки «Любимые» и другие сердца-сущности. */
+        track_menu_refresh_favorites();
+    } else if (kind == FAV_ARTIST) {
+        favorites_artist_set_liked(g_object_get_data(G_OBJECT(btn), "fav-artist"), desired);
+        track_menu_refresh_favorites();
+    } else {
+        const char *uri = g_object_get_data(G_OBJECT(btn), "fav-uri");
+        if (uri && playlist_toggle_favorite_cb) {
+            playlist_toggle_favorite_cb(uri, desired, playlist_cb_data);
+        }
+        update_favorite_button(GTK_WIDGET(btn));
     }
-    update_favorite_button(GTK_WIDGET(btn));
     g_object_unref(btn);
 }
 
@@ -132,6 +161,42 @@ GtkWidget *track_favorite_button_new(const char *uri) {
     g_signal_connect(btn, "clicked", G_CALLBACK(on_favorite_button_clicked), NULL);
     g_object_weak_ref(G_OBJECT(btn), on_fav_button_destroyed, NULL);
     g_ptr_array_add(favorite_buttons, btn);
+    update_favorite_button(btn);
+    return btn;
+}
+
+/* Общая часть фабрик «сердечек» сущностей (альбом/исполнитель). */
+static GtkWidget *create_entity_favorite_button(int kind) {
+    if (!favorite_buttons) favorite_buttons = g_ptr_array_new();
+    ensure_favorite_css();
+
+    GtkWidget *btn = gtk_toggle_button_new();
+    gtk_button_set_icon_name(GTK_BUTTON(btn), "denchiku-heart-outline-symbolic");
+    gtk_widget_add_css_class(btn, "flat");
+    gtk_widget_set_valign(btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(btn, "Добавить в любимые");
+    g_object_set_data(G_OBJECT(btn), "fav-kind", GINT_TO_POINTER(kind));
+
+    g_signal_connect(btn, "clicked", G_CALLBACK(on_favorite_button_clicked), NULL);
+    g_object_weak_ref(G_OBJECT(btn), on_fav_button_destroyed, NULL);
+    g_ptr_array_add(favorite_buttons, btn);
+    return btn;
+}
+
+GtkWidget *favorite_album_button_new(const char *album, const char *album_artist) {
+    GtkWidget *btn = create_entity_favorite_button(FAV_ALBUM);
+    g_object_set_data_full(G_OBJECT(btn), "fav-album",
+                           g_strdup(album ? album : ""), g_free);
+    g_object_set_data_full(G_OBJECT(btn), "fav-album-artist",
+                           g_strdup(album_artist ? album_artist : ""), g_free);
+    update_favorite_button(btn);
+    return btn;
+}
+
+GtkWidget *favorite_artist_button_new(const char *artist) {
+    GtkWidget *btn = create_entity_favorite_button(FAV_ARTIST);
+    g_object_set_data_full(G_OBJECT(btn), "fav-artist",
+                           g_strdup(artist ? artist : ""), g_free);
     update_favorite_button(btn);
     return btn;
 }

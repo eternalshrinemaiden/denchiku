@@ -427,15 +427,27 @@ AdwNavigationPage *artist_detail_page_create(Player *player,
     gtk_widget_add_css_class(counts_lbl, "dim-label");
     gtk_box_append(GTK_BOX(meta), counts_lbl);
 
-    GtkWidget *play_btn = gtk_button_new_with_label("Воспроизвести");
+    GtkWidget *play_btn = gtk_button_new_from_icon_name("media-playback-start-symbolic");
+    gtk_widget_set_tooltip_text(play_btn, "Воспроизвести");
     gtk_widget_set_halign(play_btn, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(play_btn, 12);
     gtk_widget_add_css_class(play_btn, "suggested-action");
-    gtk_widget_add_css_class(play_btn, "pill");
+    gtk_widget_add_css_class(play_btn, "circular");
     g_object_set_data(G_OBJECT(play_btn), "player", player);
     g_object_set_data(G_OBJECT(play_btn), "tracks", artist_tracks);
     g_signal_connect(play_btn, "clicked", G_CALLBACK(on_play_all_clicked), NULL);
-    gtk_box_append(GTK_BOX(meta), play_btn);
+
+    /* «Воспроизвести» и «сердце» (пометка любимого исполнителя) в одном ряду. */
+    GtkWidget *actions_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(actions_row, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(actions_row, 12);
+    gtk_box_append(GTK_BOX(actions_row), play_btn);
+
+    GtkWidget *heart_btn = favorite_artist_button_new(artist);
+    gtk_widget_add_css_class(heart_btn, "circular");
+    gtk_widget_set_valign(heart_btn, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(actions_row), heart_btn);
+
+    gtk_box_append(GTK_BOX(meta), actions_row);
 
     gtk_box_append(GTK_BOX(hero), meta);
     gtk_box_append(GTK_BOX(hero), create_round_cover_box(best_artist_cover(artist_tracks, artist),

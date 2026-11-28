@@ -650,6 +650,109 @@ GtkWidget *ui_create_round_cover_widget(const char *cover_path, int size) {
     return create_cover_widget(cover_path, size, TRUE);
 }
 
+/* ===== обложка с оверлеем (затемнение + сердце по наведению) ===== */
+
+static void ensure_cover_overlay_css(void) {
+    static gboolean loaded = FALSE;
+    if (loaded) return;
+    loaded = TRUE;
+
+    GtkCssProvider *css = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(css,
+        ".cover-scrim { background: rgba(0, 0, 0, 0.35); }"
+        ".like-overlay-button {"
+        "  background: rgba(0, 0, 0, 0.45);"
+        "  min-width: 0;"
+        "  min-height: 0;"
+        "  border-radius: 9999px;"
+        "  padding: 6px;"
+        "}"
+        ".like-overlay-button:hover { background: rgba(0, 0, 0, 0.65); }"
+        /* Иконка на тёмном круге: белая по умолчанию, красная у «любимого»
+         * (тот же цвет, что и у сердечек треков). Оба правила держим здесь,
+         * чтобы порядок применения не зависел от других CSS-провайдеров. */
+        ".like-overlay-button image { color: #ffffff; }"
+        ".like-overlay-button.denchiku-favorite image { color: #e01b24; }");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+                                               GTK_STYLE_PROVIDER(css),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(css);
+}
+
+static void on_cover_overlay_motion(GtkEventControllerMotion *c, double x, double y,
+                                    gpointer user_data) {
+    (void)x; (void)y; (void)user_data;
+    GtkWidget *overlay = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(c));
+    GtkWidget *scrim = g_object_get_data(G_OBJECT(overlay), "cover-scrim");
+    GtkWidget *heart = g_object_get_data(G_OBJECT(overlay), "cover-heart");
+    gboolean inside = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(overlay), "cover-hover"));
+
+    gtk_widget_set_opacity(scrim, inside ? 1.0 : 0.0);
+    gtk_widget_set_opacity(heart, inside ? 1.0 : 0.0);
+    /* Скрытая (opacity 0) кнопка не должна перехватывать клики по карточке. */
+    gtk_widget_set_can_target(heart, inside);
+}
+
+static void on_cover_overlay_enter(GtkEventControllerMotion *c, double x, double y,
+                                   gpointer user_data) {
+    GtkWidget *overlay = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(c));
+    g_object_set_data(G_OBJECT(overlay), "cover-hover", GINT_TO_POINTER(1));
+    on_cover_overlay_motion(c, x, y, user_data);
+}
+
+static void on_cover_overlay_leave(GtkEventControllerMotion *c, gpointer user_data) {
+    GtkWidget *overlay = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(c));
+    g_object_set_data(G_OBJECT(overlay), "cover-hover", GINT_TO_POINTER(0));
+    on_cover_overlay_motion(c, 0, 0, user_data);
+}
+
+GtkWidget *ui_create_cover_with_heart(const char *cover_path, int size,
+                                      gboolean round, GtkWidget *heart) {
+    GtkWidget *cover = round ? ui_create_round_cover_widget(cover_path, size)
+                             : ui_create_cover_widget(cover_path, size);
+    if (!heart) return cover;
+
+    ensure_cover_overlay_css();
+
+    GtkWidget *overlay = gtk_overlay_new();
+    gtk_widget_set_size_request(overlay, size, size);
+    gtk_widget_set_halign(overlay, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(overlay, GTK_ALIGN_CENTER);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), cover);
+
+    /* Затемняющий слой: события не ловит, только визуально темнит обложку. */
+    GtkWidget *scrim = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_size_request(scrim, size, size);
+    gtk_widget_add_css_class(scrim, "cover-scrim");
+    if (round) ui_make_cover_round(scrim);
+    gtk_widget_set_can_target(scrim, FALSE);
+    gtk_widget_set_opacity(scrim, 0.0);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), scrim);
+
+    /* Кнопка-сердце в правом верхнем углу. По умолчанию невидима и не ловит
+     * клики (иначе перехватывала бы нажатие на карточку). */
+    gtk_widget_add_css_class(heart, "like-overlay-button");
+    GtkWidget *heart_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_halign(heart_box, GTK_ALIGN_END);
+    gtk_widget_set_valign(heart_box, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(heart_box, 6);
+    gtk_widget_set_margin_end(heart_box, 6);
+    gtk_box_append(GTK_BOX(heart_box), heart);
+    gtk_widget_set_opacity(heart_box, 0.0);
+    gtk_widget_set_can_target(heart_box, FALSE);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), heart_box);
+
+    g_object_set_data(G_OBJECT(overlay), "cover-scrim", scrim);
+    g_object_set_data(G_OBJECT(overlay), "cover-heart", heart_box);
+
+    GtkEventController *motion = gtk_event_controller_motion_new();
+    g_signal_connect(motion, "enter", G_CALLBACK(on_cover_overlay_enter), NULL);
+    g_signal_connect(motion, "leave", G_CALLBACK(on_cover_overlay_leave), NULL);
+    gtk_widget_add_controller(overlay, motion);
+
+    return overlay;
+}
+
 GtkWidget *ui_create_cover_picture(const char *cover_path, int size) {
     cover_loader_init();
 

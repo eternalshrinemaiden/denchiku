@@ -307,11 +307,11 @@ static void on_play_all_clicked(GtkButton *btn, gpointer user_data) {
     }
 }
 
-/* Кнопка-карандаш: правка тегов всех треков альбома. Массив треков берём из
- * данных кнопки (тот же, что у «Воспроизвести»). */
-static void on_edit_tags_clicked(GtkButton *btn, gpointer user_data) {
-    (void)user_data;
-    GPtrArray *tracks = g_object_get_data(G_OBJECT(btn), "album-tracks");
+/* Пункт «Редактировать теги» контекстного меню шапки: правка тегов всех треков
+ * альбома. Массив треков берём из данных кнопки-меню. */
+static void on_edit_tags_action(GSimpleAction *action, GVariant *param, gpointer user_data) {
+    (void)action; (void)param;
+    GPtrArray *tracks = g_object_get_data(G_OBJECT(user_data), "album-tracks");
     if (edit_tags_cb && tracks && tracks->len > 0) {
         edit_tags_cb(tracks, edit_tags_data);
     }
@@ -874,31 +874,50 @@ AdwNavigationPage *album_detail_page_create(Player *player,
     }
     g_ptr_array_unref(genres);
 
-    hl->play_btn = gtk_button_new_with_label("Воспроизвести");
+    hl->play_btn = gtk_button_new_from_icon_name("media-playback-start-symbolic");
+    gtk_widget_set_tooltip_text(hl->play_btn, "Воспроизвести");
     gtk_widget_set_halign(hl->play_btn, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(hl->play_btn, 12);
     gtk_widget_add_css_class(hl->play_btn, "suggested-action");
-    gtk_widget_add_css_class(hl->play_btn, "pill");
+    gtk_widget_add_css_class(hl->play_btn, "circular");
     g_object_set_data_full(G_OBJECT(hl->play_btn), "album-tracks",
                            g_ptr_array_ref(filtered), (GDestroyNotify)g_ptr_array_unref);
     g_signal_connect(hl->play_btn, "clicked", G_CALLBACK(on_play_all_clicked), player);
 
-    /* Ряд действий шапки: «Воспроизвести» + кнопка-карандаш правки тегов всех
-     * треков альбома. */
+    /* Ряд действий шапки: «Воспроизвести», «сердце» (пометка любимого альбома)
+     * и контекстное меню, в котором спрятана правка тегов всех треков альбома. */
     GtkWidget *actions_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_halign(actions_row, GTK_ALIGN_START);
     gtk_widget_set_margin_top(actions_row, 12);
     gtk_box_append(GTK_BOX(actions_row), hl->play_btn);
 
-    GtkWidget *edit_btn = gtk_button_new_from_icon_name("document-edit-symbolic");
-    gtk_widget_add_css_class(edit_btn, "pill");
-    gtk_widget_add_css_class(edit_btn, "flat");
-    gtk_widget_set_valign(edit_btn, GTK_ALIGN_CENTER);
-    gtk_widget_set_tooltip_text(edit_btn, "Редактировать теги альбома");
-    g_object_set_data_full(G_OBJECT(edit_btn), "album-tracks",
+    GtkWidget *heart_btn = favorite_album_button_new(album_name, album_artist);
+    gtk_widget_add_css_class(heart_btn, "circular");
+    gtk_widget_set_valign(heart_btn, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(actions_row), heart_btn);
+
+    GtkWidget *menu_btn = gtk_menu_button_new();
+    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "view-more-symbolic");
+    gtk_widget_add_css_class(menu_btn, "circular");
+    gtk_widget_add_css_class(menu_btn, "flat");
+    gtk_widget_set_valign(menu_btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(menu_btn, "Ещё");
+    g_object_set_data_full(G_OBJECT(menu_btn), "album-tracks",
                            g_ptr_array_ref(filtered), (GDestroyNotify)g_ptr_array_unref);
-    g_signal_connect(edit_btn, "clicked", G_CALLBACK(on_edit_tags_clicked), player);
-    gtk_box_append(GTK_BOX(actions_row), edit_btn);
+
+    GMenu *head_menu = g_menu_new();
+    g_menu_append(head_menu, "Редактировать теги", "album.edit-tags");
+    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), G_MENU_MODEL(head_menu));
+    g_object_unref(head_menu);
+
+    GSimpleActionGroup *head_actions = g_simple_action_group_new();
+    GSimpleAction *edit_action = g_simple_action_new("edit-tags", NULL);
+    g_signal_connect(edit_action, "activate", G_CALLBACK(on_edit_tags_action), menu_btn);
+    g_action_map_add_action(G_ACTION_MAP(head_actions), G_ACTION(edit_action));
+    g_object_unref(edit_action);
+    gtk_widget_insert_action_group(GTK_WIDGET(menu_btn), "album", G_ACTION_GROUP(head_actions));
+    g_object_unref(head_actions);
+
+    gtk_box_append(GTK_BOX(actions_row), menu_btn);
 
     /* Кнопка-действие шапки должна выравниваться вместе с остальными
      * элементами meta_box при узком окне. */

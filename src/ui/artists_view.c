@@ -1,8 +1,10 @@
 #include "artists_view.h"
 #include "album_detail_page.h"
 #include "artist_detail_page.h"
+#include "favorites.h"
 #include "media_browser.h"
 #include "track.h"
+#include "track_menu.h"
 #include "ui_helpers.h"
 #include "view_controls.h"
 
@@ -42,9 +44,15 @@ static ArtistItem *artist_item_new(const char *name, const char *cover_path) {
 static const char *get_item_name(GObject *obj)  { return MC_ARTIST_ITEM(obj)->name; }
 static const char *get_item_cover(GObject *obj) { return MC_ARTIST_ITEM(obj)->cover_path; }
 
+/* Кнопка-«сердце» на карточке исполнителя: пометка любимого исполнителя. */
+static GtkWidget *make_artist_heart(GObject *obj) {
+    return favorite_artist_button_new(MC_ARTIST_ITEM(obj)->name);
+}
+
 struct _ArtistsView {
     Player *player;
     GPtrArray *tracks;
+    gboolean liked_only; /* раздел «Любимые артисты» — только помеченные */
 
     AdwNavigationView *nav;
     AdwNavigationPage *root;
@@ -103,46 +111,6 @@ static void on_controls_changed(ViewControls *vc, gpointer user_data) {
     media_browser_refresh(arv->browser);
 }
 
-ArtistsView *artists_view_new(Player *player, AdwOverlaySplitView *split_view) {
-    ArtistsView *arv = g_new0(ArtistsView, 1);
-    arv->player = player;
-    arv->store = g_list_store_new(TYPE_ARTIST_ITEM);
-    arv->controls = view_controls_new(FALSE, on_controls_changed, arv);
-
-    MediaBrowserConfig cfg = {
-        .title_col_name = "Исполнитель",
-        .subtitle_col_name = NULL,
-        .year_col_name = NULL,
-        .get_title = get_item_name,
-        .get_subtitle = NULL,
-        .get_cover_path = get_item_cover,
-        .get_year = NULL,
-        .round_covers = TRUE,
-    };
-
-    arv->browser = media_browser_new(arv->store, arv->controls, &cfg, on_artist_activated, arv);
-
-    GtkWidget *hb = ui_create_content_header(split_view);
-    adw_header_bar_pack_end(ADW_HEADER_BAR(hb), view_controls_get_widget(arv->controls));
-
-    AdwToolbarView *tv = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
-    gtk_widget_add_css_class(GTK_WIDGET(tv), "view");
-    adw_toolbar_view_set_top_bar_style(tv, ADW_TOOLBAR_FLAT);
-    adw_toolbar_view_add_top_bar(tv, hb);
-    adw_toolbar_view_set_content(tv, media_browser_get_widget(arv->browser));
-
-    AdwNavigationPage *root = adw_navigation_page_new(GTK_WIDGET(tv), "Исполнители");
-    arv->nav = ADW_NAVIGATION_VIEW(adw_navigation_view_new());
-    arv->root = root;
-    adw_navigation_view_add(arv->nav, root);
-
-    return arv;
-}
-
-GtkWidget *artists_view_get_widget(ArtistsView *arv) {
-    return GTK_WIDGET(arv->nav);
-}
-
 /* Добавляет трек в корзину исполнителя name (если ещё не добавлен в рамках
  * обработки этого трека — см. seen). */
 static void index_tag(ArtistsView *arv, Track *t, const char *tag, GHashTable *seen) {
@@ -177,10 +145,11 @@ static const char *best_cover(GPtrArray *bucket, const char *name) {
     return fallback;
 }
 
-void artists_view_set_tracks(ArtistsView *arv, GPtrArray *tracks) {
-    if (arv->tracks) g_ptr_array_unref(arv->tracks);
-    arv->tracks = tracks ? g_ptr_array_ref(tracks) : NULL;
-
+/* Перестраивает индекс исполнителей и модель списка. В режиме «Любимые» в модель
+ * попадают только помеченные, поэтому раздел обновляется и по событию смены
+ * пометок (см. on_favorites_changed). Индекс всегда содержит всех исполнителей:
+ * на него опирается открытие страницы исполнителя. */
+static void rebuild_store(ArtistsView *arv) {
     g_list_store_remove_all(arv->store);
     if (arv->index) {
         g_hash_table_destroy(arv->index);
@@ -210,12 +179,70 @@ void artists_view_set_tracks(ArtistsView *arv, GPtrArray *tracks) {
     while (g_hash_table_iter_next(&it, &key, &value)) {
         const char *name = key;
         GPtrArray *bucket = value;
+        if (arv->liked_only && !favorites_artist_is_liked(name)) continue;
         g_ptr_array_add(items, artist_item_new(name, best_cover(bucket, name)));
     }
     if (items->len > 0) {
         g_list_store_splice(arv->store, 0, 0, items->pdata, items->len);
     }
     g_ptr_array_unref(items);
+}
+
+static void on_favorites_changed(gpointer user_data) {
+    ArtistsView *arv = user_data;
+    if (arv->liked_only) rebuild_store(arv);
+}
+
+ArtistsView *artists_view_new(Player *player, AdwOverlaySplitView *split_view, gboolean liked_only) {
+    ArtistsView *arv = g_new0(ArtistsView, 1);
+    arv->player = player;
+    arv->liked_only = liked_only;
+    arv->store = g_list_store_new(TYPE_ARTIST_ITEM);
+    arv->controls = view_controls_new(FALSE, on_controls_changed, arv);
+
+    MediaBrowserConfig cfg = {
+        .title_col_name = "Исполнитель",
+        .subtitle_col_name = NULL,
+        .year_col_name = NULL,
+        .get_title = get_item_name,
+        .get_subtitle = NULL,
+        .get_cover_path = get_item_cover,
+        .get_year = NULL,
+        .make_heart = make_artist_heart,
+        .round_covers = TRUE,
+    };
+
+    arv->browser = media_browser_new(arv->store, arv->controls, &cfg, on_artist_activated, arv);
+
+    GtkWidget *hb = ui_create_content_header(split_view);
+    adw_header_bar_pack_end(ADW_HEADER_BAR(hb), view_controls_get_widget(arv->controls));
+
+    AdwToolbarView *tv = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
+    gtk_widget_add_css_class(GTK_WIDGET(tv), "view");
+    adw_toolbar_view_set_top_bar_style(tv, ADW_TOOLBAR_FLAT);
+    adw_toolbar_view_add_top_bar(tv, hb);
+    adw_toolbar_view_set_content(tv, media_browser_get_widget(arv->browser));
+
+    AdwNavigationPage *root = adw_navigation_page_new(
+        GTK_WIDGET(tv), liked_only ? "Любимые артисты" : "Исполнители");
+    arv->nav = ADW_NAVIGATION_VIEW(adw_navigation_view_new());
+    arv->root = root;
+    adw_navigation_view_add(arv->nav, root);
+
+    /* В разделе «Любимые» лайк с любой карточки должен перестроить список. */
+    if (liked_only) favorites_add_listener(on_favorites_changed, arv);
+
+    return arv;
+}
+
+GtkWidget *artists_view_get_widget(ArtistsView *arv) {
+    return GTK_WIDGET(arv->nav);
+}
+
+void artists_view_set_tracks(ArtistsView *arv, GPtrArray *tracks) {
+    if (arv->tracks) g_ptr_array_unref(arv->tracks);
+    arv->tracks = tracks ? g_ptr_array_ref(tracks) : NULL;
+    rebuild_store(arv);
 }
 
 void artists_view_refresh_playing(ArtistsView *arv, const char *playing_uri) {
@@ -230,6 +257,7 @@ void artists_view_refresh_playing(ArtistsView *arv, const char *playing_uri) {
 
 void artists_view_free(ArtistsView *arv) {
     if (!arv) return;
+    favorites_remove_listener(on_favorites_changed, arv);
     if (arv->tracks) g_ptr_array_unref(arv->tracks);
     if (arv->index) g_hash_table_destroy(arv->index);
     media_browser_free(arv->browser);

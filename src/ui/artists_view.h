@@ -4,7 +4,8 @@
 
 typedef struct _ArtistsView ArtistsView;
 
-ArtistsView *artists_view_new(Player *player, AdwOverlaySplitView *split_view);
+ArtistsView *artists_view_new(Player *player, AdwOverlaySplitView *split_view,
+                              gboolean liked_only);
 GtkWidget   *artists_view_get_widget(ArtistsView *arv);
 void         artists_view_set_tracks(ArtistsView *arv, GPtrArray *tracks);
 /* Открывает альбом внутри стека раздела (страница исполнителя остаётся в истории). */

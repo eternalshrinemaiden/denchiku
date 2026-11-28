@@ -82,7 +82,15 @@ void track_menu_row_set_track(GtkWidget *row, Track *track);
 GtkWidget *track_favorite_button_new(const char *uri);
 /* Меняет трек, к которому привязана кнопка, и обновляет её вид. */
 void       track_favorite_button_set_uri(GtkWidget *button, const char *uri);
-/* Обновляет все созданные кнопки-«сердечки» по текущему состоянию. */
+
+/* «Сердечко» для пометки любимого альбома/исполнителя (как в Spotify: отметка
+ * сущности, а не добавление треков в «Любимые треки»). Состояние хранит модуль
+ * favorites, пометка переживает пересканирование. */
+GtkWidget *favorite_album_button_new(const char *album, const char *album_artist);
+GtkWidget *favorite_artist_button_new(const char *artist);
+
+/* Обновляет все созданные кнопки-«сердечки» (треки, альбомы, исполнители) по
+ * текущему состоянию. */
 void       track_menu_refresh_favorites(void);
 
 /* После закрытия popover отвязывает его от кнопки, чтобы при следующем открытии

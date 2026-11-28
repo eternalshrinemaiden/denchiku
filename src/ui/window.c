@@ -629,12 +629,26 @@ GtkWidget *main_window_new(AdwApplication *app, Player *player) {
     ws->sidebar_list = GTK_LIST_BOX(gtk_list_box_new());
     gtk_widget_add_css_class(GTK_WIDGET(ws->sidebar_list), "navigation-sidebar");
 
-    /* Раздел «Медиатека»: альбомы, исполнители, жанры. */
+    /* Раздел «Альбомы». */
     gtk_list_box_append(ws->sidebar_list,
-                        ui_create_sidebar_section_header("Медиатека", NULL));
-    GtkWidget *row_albums = ui_create_sidebar_row("albums", "Альбомы", "media-optical-symbolic");
+                        ui_create_sidebar_section_header("Альбомы", NULL));
+    GtkWidget *row_albums = ui_create_sidebar_row("albums", "Все альбомы", "media-optical-symbolic");
     gtk_list_box_append(ws->sidebar_list, row_albums);
-    gtk_list_box_append(ws->sidebar_list, ui_create_sidebar_row("artists", "Исполнители", "system-users-symbolic"));
+    gtk_list_box_append(ws->sidebar_list,
+                        ui_create_sidebar_row("favorite-albums", "Любимые альбомы",
+                                              "denchiku-heart-filled-symbolic"));
+
+    /* Раздел «Артисты». */
+    gtk_list_box_append(ws->sidebar_list,
+                        ui_create_sidebar_section_header("Артисты", NULL));
+    gtk_list_box_append(ws->sidebar_list, ui_create_sidebar_row("artists", "Все артисты", "system-users-symbolic"));
+    gtk_list_box_append(ws->sidebar_list,
+                        ui_create_sidebar_row("favorite-artists", "Любимые артисты",
+                                              "denchiku-heart-filled-symbolic"));
+
+    /* Раздел «Другое». */
+    gtk_list_box_append(ws->sidebar_list,
+                        ui_create_sidebar_section_header("Другое", NULL));
     gtk_list_box_append(ws->sidebar_list, ui_create_sidebar_row("genres", "Жанры", "tag-symbolic"));
 
     /* Раздел «Треки»: «Все треки» и «Любимые треки» (строку «Любимых» вставляет
